@@ -12,7 +12,9 @@ API_HOST = os.getenv('AI_SERVICE_HOST', '0.0.0.0')
 API_PORT = int(os.getenv('AI_SERVICE_PORT', '8001'))
 
 # Sender Configuration
-SENDER_NAME = os.getenv('SENDER_NAME', 'CallSphere')
+SENDER_NAME = os.getenv('SENDER_NAME', 'Sagar Shankaran')
+SENDER_TITLE = os.getenv('SENDER_TITLE', 'Founder & CEO')
+COMPANY_NAME = os.getenv('COMPANY_NAME', 'CallSphere LLC')
 SENDER_EMAIL = os.getenv('SMTP_FROM', 'hello@callsphere.tech')
 BUSINESS_ADDRESS = os.getenv('BUSINESS_ADDRESS', '27 Orchard Pl, New York, NY 12601')
 CALENDLY_URL = os.getenv('CALENDLY_URL', 'https://calendly.com/sagar-callsphere/new-meeting')

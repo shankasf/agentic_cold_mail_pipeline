@@ -31,10 +31,15 @@ CHECK FOR THESE ISSUES:
    - Body too short or too long
    - No clear call-to-action
 
-FOOTER REQUIREMENTS:
-- Must be exactly two lines:
-  Line 1: {config.SENDER_NAME}
-  Line 2: {config.BUSINESS_ADDRESS}
+SIGNATURE REQUIREMENTS:
+- Email must end with this EXACT signature block:
+
+Best regards,
+{config.SENDER_NAME}
+{config.SENDER_TITLE}
+{config.COMPANY_NAME}
+
+- The footer_text field should contain the company address: {config.BUSINESS_ADDRESS}
 
 SCORING:
 - Start at 100
