@@ -1,6 +1,196 @@
-# CallSphere Email Marketing Dashboard
+# Agentic Cold Mail Pipeline
 
 A production-ready admin dashboard for generating personalized cold emails using OpenAI's Multi-Agent SDK. The system ingests business data from various file formats, extracts entities, and generates demo-booking emails with compliance checks.
+
+---
+
+## 🔄 Application Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           AGENTIC COLD MAIL PIPELINE                            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 1: DATA INGESTION                                                         │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+     ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐
+     │  CSV    │    │  XLSX   │    │   PDF   │    │   TXT   │
+     └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘
+          │              │              │              │
+          └──────────────┴──────────────┴──────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │     FILE PARSER         │
+                    │  (Chunk & Deduplicate)  │
+                    └───────────┬─────────────┘
+                                │
+                                ▼
+                    ┌─────────────────────────┐
+                    │    PARSED CHUNKS        │
+                    │  (Stored in Database)   │
+                    └───────────┬─────────────┘
+                                │
+┌───────────────────────────────┴──────────────────────────────────────────────────┐
+│  PHASE 2: AI MULTI-AGENT PIPELINE                                                │
+└──────────────────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+          ┌─────────────────────────────────────────────────┐
+          │            🤖 AGENT 1: ENTITY RESOLVER          │
+          │  ─────────────────────────────────────────────  │
+          │  • Extracts businesses from text chunks         │
+          │  • Identifies contacts (emails, names, roles)   │
+          │  • Creates evidence links to source chunks      │
+          │  • Assigns confidence scores (0-100)            │
+          └────────────────────┬────────────────────────────┘
+                               │
+                               ▼
+          ┌─────────────────────────────────────────────────┐
+          │           🤖 AGENT 2: BUSINESS ANALYZER         │
+          │  ─────────────────────────────────────────────  │
+          │  • Analyzes each business's context             │
+          │  • Selects top 3 personalization facts          │
+          │  • Infers pain points from industry data        │
+          │  • Matches with industry playbooks              │
+          └────────────────────┬────────────────────────────┘
+                               │
+                               ▼
+          ┌─────────────────────────────────────────────────┐
+          │            🤖 AGENT 3: EMAIL WRITER             │
+          │  ─────────────────────────────────────────────  │
+          │  • Generates personalized cold email            │
+          │  • Enforces 70-110 word limit                   │
+          │  • Includes single Calendly CTA link            │
+          │  • Uses only evidence-backed facts              │
+          └────────────────────┬────────────────────────────┘
+                               │
+                               ▼
+          ┌─────────────────────────────────────────────────┐
+          │          🤖 AGENT 4: COMPLIANCE CHECKER         │
+          │  ─────────────────────────────────────────────  │
+          │  • Scans for spam trigger words                 │
+          │  • Validates word count & link structure        │
+          │  • Checks footer format compliance              │
+          │  • Calculates deliverability score (0-100)      │
+          └────────────────────┬────────────────────────────┘
+                               │
+                               ▼
+          ┌─────────────────────────────────────────────────┐
+          │            🤖 AGENT 5: GATEKEEPER               │
+          │  ─────────────────────────────────────────────  │
+          │  • Reviews confidence & deliverability scores   │
+          │  • Makes final decision:                        │
+          │    → APPROVED (scores ≥ 70%)                    │
+          │    → NEEDS_REVIEW (scores < 70%)                │
+          │    → DRAFT (incomplete data)                    │
+          └────────────────────┬────────────────────────────┘
+                               │
+┌──────────────────────────────┴───────────────────────────────────────────────────┐
+│  PHASE 3: HUMAN REVIEW & APPROVAL                                                │
+└──────────────────────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+          ┌─────────────────────────────────────────────────┐
+          │              📊 ADMIN DASHBOARD                 │
+          │  ─────────────────────────────────────────────  │
+          │  • View all generated emails                    │
+          │  • Filter by status, industry, scores           │
+          │  • Edit subject/body with live re-scoring       │
+          │  • View source evidence for each fact           │
+          │  • Approve or reject emails                     │
+          └────────────────────┬────────────────────────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+     ┌──────────────────┐          ┌──────────────────┐
+     │    ✅ APPROVED   │          │   📝 EXPORTED    │
+     └────────┬─────────┘          └────────┬─────────┘
+              │                             │
+              ▼                             ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│  PHASE 4: DELIVERY                                                               │
+└──────────────────────────────────────────────────────────────────────────────────┘
+              │                             │
+              ▼                             ▼
+     ┌──────────────────┐          ┌──────────────────┐
+     │   📧 AWS SES     │          │   📄 CSV/PDF     │
+     │   SMTP Send      │          │   Export Files   │
+     │  (100/day cap)   │          │                  │
+     └────────┬─────────┘          └──────────────────┘
+              │
+              ▼
+     ┌──────────────────┐
+     │  📬 WEBHOOK      │
+     │  Bounce/Complaint│
+     │  Handling        │
+     └──────────────────┘
+```
+
+---
+
+## 📊 Data Flow Diagram
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Frontend  │────▶│  Next.js    │────▶│  PostgreSQL │
+│  (React UI) │◀────│  API Routes │◀────│  (Prisma)   │
+└─────────────┘     └──────┬──────┘     └─────────────┘
+                          │
+                          │ HTTP
+                          ▼
+                   ┌─────────────┐
+                   │  AI Service │
+                   │  (FastAPI)  │
+                   └──────┬──────┘
+                          │
+                          │ OpenAI API
+                          ▼
+                   ┌─────────────┐
+                   │   OpenAI    │
+                   │  GPT-4o     │
+                   └─────────────┘
+
+┌─────────────┐     ┌─────────────┐
+│   BullMQ    │────▶│    Redis    │
+│   Workers   │◀────│   (Queue)   │
+└─────────────┘     └─────────────┘
+```
+
+---
+
+## 🎯 Email Status Lifecycle
+
+```
+    ┌──────────┐
+    │  DRAFT   │ ─── Initial state after generation
+    └────┬─────┘
+         │
+         ▼
+┌────────────────┐
+│  NEEDS_REVIEW  │ ─── Low confidence/deliverability score
+└────────┬───────┘
+         │ (Admin reviews & edits)
+         ▼
+   ┌───────────┐
+   │ APPROVED  │ ─── Ready for sending
+   └─────┬─────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+┌───────┐ ┌──────────┐
+│ SENT  │ │ EXPORTED │
+└───┬───┘ └──────────┘
+    │
+    ▼
+┌─────────────────────┐
+│ BOUNCED / COMPLAINT │ ─── Via SES webhook
+└─────────────────────┘
+```
+
+---
 
 ## Features
 
