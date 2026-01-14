@@ -36,7 +36,7 @@ CRITICAL RULES:
 business_analyzer_agent = Agent(
     name="BusinessAnalyzer",
     instructions=INSTRUCTIONS,
-    model="gpt-4o",
+    model=config.OPENAI_MODEL,
     output_type=BusinessAnalyzerOutput,
 )
 

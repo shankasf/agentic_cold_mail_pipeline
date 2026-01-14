@@ -52,7 +52,7 @@ BAD SUBJECT EXAMPLES (AVOID):
 email_writer_agent = Agent(
     name="EmailWriter",
     instructions=INSTRUCTIONS,
-    model="gpt-4o",
+    model=config.OPENAI_MODEL,
     output_type=EmailWriterOutput,
 )
 

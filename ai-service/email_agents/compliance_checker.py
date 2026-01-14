@@ -57,7 +57,7 @@ OUTPUT:
 compliance_agent = Agent(
     name="ComplianceChecker",
     instructions=INSTRUCTIONS,
-    model="gpt-4o",
+    model=config.OPENAI_MODEL,
     output_type=ComplianceOutput,
 )
 

@@ -33,7 +33,7 @@ Provide clear reasoning for your decision.
 gatekeeper_agent = Agent(
     name="Gatekeeper",
     instructions=INSTRUCTIONS,
-    model="gpt-4o",
+    model=config.OPENAI_MODEL,
     output_type=GatekeeperOutput,
 )
 

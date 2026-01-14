@@ -37,7 +37,7 @@ CRITICAL RULES:
 entity_resolver_agent = Agent(
     name="EntityResolver",
     instructions=INSTRUCTIONS,
-    model="gpt-4o",
+    model=config.OPENAI_MODEL,
     output_type=EntityResolverOutput,
 )
 

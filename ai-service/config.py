@@ -6,10 +6,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'), override=Fals
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o')
 
 # API Configuration
 API_HOST = os.getenv('AI_SERVICE_HOST', '0.0.0.0')
 API_PORT = int(os.getenv('AI_SERVICE_PORT', '8001'))
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Sender Configuration
 SENDER_NAME = os.getenv('SENDER_NAME', 'Sagar Shankaran')
