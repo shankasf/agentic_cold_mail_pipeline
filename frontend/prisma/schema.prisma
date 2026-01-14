@@ -1,0 +1,254 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Upload status enum
+enum UploadStatus {
+  QUEUED
+  PARSED
+  FAILED
+}
+
+// Evidence type enum
+enum EvidenceType {
+  EMAIL_FOUND
+  INDUSTRY
+  SERVICES
+  TOOLS
+  PAIN_POINT
+  LOCATION
+  OTHER
+}
+
+// Email draft status enum
+enum EmailStatus {
+  DRAFT
+  NEEDS_REVIEW
+  APPROVED
+  EXPORTED
+  SENT
+  REPLIED
+  BOUNCED
+  COMPLAINT
+}
+
+// Export type enum
+enum ExportType {
+  CSV
+  PDF
+  BATCH_ZIP
+}
+
+// Email event type enum
+enum EmailEventType {
+  SENT
+  DELIVERED
+  OPEN
+  CLICK
+  REPLY
+  BOUNCE
+  COMPLAINT
+}
+
+// Suppression reason enum
+enum SuppressionReason {
+  BOUNCE
+  COMPLAINT
+  MANUAL
+}
+
+// Uploads table
+model Upload {
+  id           String       @id @default(uuid())
+  filename     String
+  fileType     String       @map("file_type")
+  sizeBytes    Int          @map("size_bytes")
+  storagePath  String       @map("storage_path")
+  uploadedAt   DateTime     @default(now()) @map("uploaded_at")
+  status       UploadStatus @default(QUEUED)
+  progressText String?      @map("progress_text")
+  errorText    String?      @map("error_text")
+
+  chunks   ParsedChunk[]
+  evidence BusinessEvidence[]
+
+  @@map("uploads")
+}
+
+// Parsed chunks table
+model ParsedChunk {
+  id          String @id @default(uuid())
+  uploadId    String @map("upload_id")
+  chunkIndex  Int    @map("chunk_index")
+  textContent String @map("text_content")
+  sourceMeta  Json   @map("source_meta") // { page?, sheet?, rowStart?, rowEnd? }
+  hash        String
+
+  upload       Upload                 @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  evidence     BusinessEvidence[]
+  observations IndustryObservation[]
+
+  @@unique([uploadId, hash])
+  @@map("parsed_chunks")
+}
+
+// Businesses table
+model Business {
+  id            String   @id @default(uuid())
+  canonicalName String   @map("canonical_name")
+  website       String?
+  industryGuess String?  @map("industry_guess")
+  location      String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  contacts     Contact[]
+  evidence     BusinessEvidence[]
+  observations IndustryObservation[]
+  emailDrafts  EmailDraft[]
+
+  @@map("businesses")
+}
+
+// Contacts table
+model Contact {
+  id               String   @id @default(uuid())
+  businessId       String   @map("business_id")
+  email            String   @unique
+  name             String?
+  role             String?
+  sourceConfidence Int      @default(0) @map("source_confidence")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  emailDrafts EmailDraft[]
+
+  @@map("contacts")
+}
+
+// Business evidence table
+model BusinessEvidence {
+  id             String       @id @default(uuid())
+  businessId     String       @map("business_id")
+  uploadId       String       @map("upload_id")
+  chunkId        String       @map("chunk_id")
+  evidenceType   EvidenceType @map("evidence_type")
+  extractedValue String       @map("extracted_value")
+  confidence     Int          @default(0)
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  business Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  upload   Upload      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  chunk    ParsedChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@map("business_evidence")
+}
+
+// Industry playbook table
+model IndustryPlaybook {
+  id              String   @id @default(uuid())
+  industry        String   @unique
+  commonPainPoints Json    @map("common_pain_points") // string[]
+  valueProps      Json     @map("value_props") // string[]
+  subjectAngles   Json     @map("subject_angles") // string[]
+  safeClaims      Json     @map("safe_claims") // string[]
+  bannedPhrases   Json     @map("banned_phrases") // string[]
+  lastUpdatedAt   DateTime @default(now()) @map("last_updated_at")
+
+  @@map("industry_playbook")
+}
+
+// Industry observations table
+model IndustryObservation {
+  id              String   @id @default(uuid())
+  industry        String
+  businessId      String   @map("business_id")
+  observation     String
+  evidenceChunkId String   @map("evidence_chunk_id")
+  confidence      Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  business Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  chunk    ParsedChunk @relation(fields: [evidenceChunkId], references: [id], onDelete: Cascade)
+
+  @@map("industry_observations")
+}
+
+// Email drafts table
+model EmailDraft {
+  id                    String      @id @default(uuid())
+  businessId            String      @map("business_id")
+  contactId             String      @map("contact_id")
+  fromName              String      @default("CallSphere") @map("from_name")
+  fromEmail             String      @default("hello@callsphere.tech") @map("from_email")
+  subject               String
+  bodyText              String      @map("body_text")
+  footerText            String      @map("footer_text")
+  personalizationTokens Json        @map("personalization_tokens") // { facts_used: [], pain_point?, industry? }
+  confidenceScore       Int         @default(0) @map("confidence_score")
+  deliverabilityScore   Int         @default(0) @map("deliverability_score")
+  spamFlags             Json        @default("[]") @map("spam_flags") // string[]
+  status                EmailStatus @default(DRAFT)
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  events   EmailEvent[]
+
+  @@map("email_drafts")
+}
+
+// Email exports table
+model EmailExport {
+  id         String     @id @default(uuid())
+  exportType ExportType @map("export_type")
+  filters    Json
+  filePath   String     @map("file_path")
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  @@map("email_exports")
+}
+
+// Email events table
+model EmailEvent {
+  id                String         @id @default(uuid())
+  emailDraftId      String         @map("email_draft_id")
+  eventType         EmailEventType @map("event_type")
+  providerMessageId String?        @map("provider_message_id")
+  eventPayload      Json           @default("{}") @map("event_payload")
+  createdAt         DateTime       @default(now()) @map("created_at")
+
+  emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
+
+  @@map("email_events")
+}
+
+// Suppression list table
+model SuppressionList {
+  email     String            @id
+  reason    SuppressionReason
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@map("suppression_list")
+}
+
+// Admin settings table (single row)
+model AdminSettings {
+  id                    String   @id @default(uuid())
+  businessAddress       String   @default("27 Orchard Pl, New York, NY 12601") @map("business_address")
+  calendlyUrl           String   @default("https://calendly.com/sagar-callsphere/new-meeting") @map("calendly_url")
+  confidenceThreshold   Int      @default(70) @map("confidence_threshold")
+  deliverabilityThreshold Int    @default(70) @map("deliverability_threshold")
+  maxWords              Int      @default(110) @map("max_words")
+  sendingCapPerDay      Int      @default(100) @map("sending_cap_per_day")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("admin_settings")
+}
