@@ -153,6 +153,8 @@ jobs:
 
       - name: Validate Prisma schema
         run: npx prisma validate
+        env:
+          DATABASE_URL: "postgresql://user:pass@localhost:5432/db"
 
       - name: Check for pending migrations
         run: npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
