@@ -68,9 +68,9 @@ export default function LoginPage() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary-100 mb-4">
               <Lock className="w-8 h-8 text-primary-600" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">Admin Login</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Sign In</h1>
             <p className="text-sm text-gray-500 mt-2">
-              Sign in to CallSphere Email Dashboard
+              Welcome to CallSphere Email Dashboard
             </p>
           </div>
 
@@ -114,6 +114,14 @@ export default function LoginPage() {
                   className="w-full pl-11 pr-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   required
                 />
+              </div>
+              <div className="mt-2 text-right">
+                <a
+                  href="/forgot-password"
+                  className="text-sm text-primary-600 hover:text-primary-700 hover:underline"
+                >
+                  Forgot Password?
+                </a>
               </div>
             </div>
 

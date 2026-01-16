@@ -10,7 +10,7 @@ const JWT_SECRET = new TextEncoder().encode(
 const protectedRoutes = ['/dashboard'];
 
 // Routes that are public
-const publicRoutes = ['/login', '/api/auth/login', '/api/auth/verify-otp'];
+const publicRoutes = ['/login', '/forgot-password', '/api/auth/login', '/api/auth/verify-otp', '/api/auth/forgot-password'];
 
 // Admin-only routes
 const adminOnlyRoutes = ['/dashboard/users', '/dashboard/settings', '/api/users'];
