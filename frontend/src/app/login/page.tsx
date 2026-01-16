@@ -42,7 +42,6 @@ export default function LoginPage() {
       router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
-      throw err; // Re-throw to let LoginForm know login failed
     }
   };
 

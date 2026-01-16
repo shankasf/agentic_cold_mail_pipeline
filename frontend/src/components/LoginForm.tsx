@@ -33,6 +33,8 @@ export default function LoginForm({
     setLoading(true);
     try {
       await onSubmit(email, password);
+    } catch {
+      // Error handling is done by parent via error prop
     } finally {
       setLoading(false);
     }
