@@ -1,0 +1,124 @@
+name: Pull Request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  NODE_VERSION: '20'
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  # Check PR title follows conventional commits
+  pr-title:
+    name: PR Title Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^[A-Z].+$
+          subjectPatternError: |
+            The subject "{subject}" doesn't match the required pattern.
+            Subject must start with a capital letter.
+
+  # Run all CI checks
+  ci-checks:
+    name: CI Checks
+    uses: ./.github/workflows/ci.yml
+
+  # Check for breaking changes
+  breaking-changes:
+    name: Breaking Changes Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for breaking changes in schema
+        working-directory: .
+        run: |
+          # Check if Prisma schema has breaking changes
+          if git diff origin/main...HEAD --name-only | grep -q "frontend/prisma/schema.prisma"; then
+            echo "::warning::Prisma schema has been modified. Please ensure migrations are included."
+          fi
+
+      - name: Check for API changes
+        working-directory: .
+        run: |
+          # Check if API routes have been modified
+          if git diff origin/main...HEAD --name-only | grep -q "frontend/src/app/api/"; then
+            echo "::notice::API routes have been modified. Please ensure backward compatibility."
+          fi
+
+  # Size check for the build
+  size-check:
+    name: Build Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Build and check size
+        run: |
+          npm run build
+          echo "## Build Size Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          du -sh .next/ >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Static files" >> $GITHUB_STEP_SUMMARY
+          du -sh .next/static/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No static files" >> $GITHUB_STEP_SUMMARY
+        env:
+          DATABASE_URL: "postgresql://user:pass@localhost:5432/db"
+          JWT_SECRET: "build-time-secret"
+
+  # Add labels based on changed files
+  labeler:
+    name: Auto Labeler
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Label PR
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+        continue-on-error: true
