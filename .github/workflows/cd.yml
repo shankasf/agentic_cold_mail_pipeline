@@ -141,3 +141,80 @@ jobs:
         run: |
           echo "Production deployment completed!"
           # Add Slack/Discord/Email notification here
+
+  # Create bug report on failure
+  bug-report:
+    name: Create Bug Report
+    runs-on: ubuntu-latest
+    needs: [ci, docker, deploy-staging, deploy-production]
+    if: failure()
+    permissions:
+      issues: write
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflow = '${{ github.workflow }}';
+            const runId = '${{ github.run_id }}';
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${runId}`;
+            const commit = '${{ github.sha }}'.substring(0, 7);
+            const branch = '${{ github.ref_name }}';
+            const actor = '${{ github.actor }}';
+            const environment = '${{ github.event.inputs.environment }}' || 'staging';
+
+            const title = `CD Failure: ${workflow} on ${branch} (${commit})`;
+            const body = `## CD Pipeline Failure
+
+            | Field | Value |
+            |-------|-------|
+            | **Workflow** | ${workflow} |
+            | **Branch** | ${branch} |
+            | **Commit** | ${commit} |
+            | **Environment** | ${environment} |
+            | **Triggered by** | @${actor} |
+            | **Run URL** | [View Run](${runUrl}) |
+
+            ### Failed Jobs
+            Please check the [workflow run](${runUrl}) for details on which jobs failed.
+
+            ### Next Steps
+            1. Review the failed job logs
+            2. Check Docker build or deployment configuration
+            3. Fix the issue and re-run the deployment
+
+            ---
+            *This issue was automatically created by the CD workflow.*`;
+
+            // Check for existing open issue with same title prefix
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'cd-failure'
+            });
+
+            const existingIssue = issues.data.find(issue =>
+              issue.title.startsWith(`CD Failure: ${workflow}`)
+            );
+
+            if (existingIssue) {
+              // Add comment to existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `### New failure on ${branch} (${commit})\n\nEnvironment: ${environment}\n[View Run](${runUrl})\n\nTriggered by @${actor}`
+              });
+              console.log(`Added comment to existing issue #${existingIssue.number}`);
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['cd-failure', 'bug']
+              });
+              console.log('Created new CD failure issue');
+            }

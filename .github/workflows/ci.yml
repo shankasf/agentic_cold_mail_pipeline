@@ -160,3 +160,78 @@ jobs:
       - name: Check for pending migrations
         run: npx prisma migrate diff --from-schema-datamodel prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code
         continue-on-error: true
+
+  # Create bug report on failure
+  bug-report:
+    name: Create Bug Report
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, security, prisma]
+    if: failure() && github.event_name != 'workflow_call'
+    permissions:
+      issues: write
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflow = '${{ github.workflow }}';
+            const runId = '${{ github.run_id }}';
+            const runUrl = `https://github.com/${{ github.repository }}/actions/runs/${runId}`;
+            const commit = '${{ github.sha }}'.substring(0, 7);
+            const branch = '${{ github.ref_name }}';
+            const actor = '${{ github.actor }}';
+
+            const title = `CI Failure: ${workflow} on ${branch} (${commit})`;
+            const body = `## CI Pipeline Failure
+
+            | Field | Value |
+            |-------|-------|
+            | **Workflow** | ${workflow} |
+            | **Branch** | ${branch} |
+            | **Commit** | ${commit} |
+            | **Triggered by** | @${actor} |
+            | **Run URL** | [View Run](${runUrl}) |
+
+            ### Failed Jobs
+            Please check the [workflow run](${runUrl}) for details on which jobs failed.
+
+            ### Next Steps
+            1. Review the failed job logs
+            2. Fix the issue locally
+            3. Push the fix to trigger a new CI run
+
+            ---
+            *This issue was automatically created by the CI workflow.*`;
+
+            // Check for existing open issue with same title prefix
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ci-failure'
+            });
+
+            const existingIssue = issues.data.find(issue =>
+              issue.title.startsWith(`CI Failure: ${workflow}`)
+            );
+
+            if (existingIssue) {
+              // Add comment to existing issue
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: `### New failure on ${branch} (${commit})\n\n[View Run](${runUrl})\n\nTriggered by @${actor}`
+              });
+              console.log(`Added comment to existing issue #${existingIssue.number}`);
+            } else {
+              // Create new issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['ci-failure', 'bug']
+              });
+              console.log('Created new CI failure issue');
+            }
