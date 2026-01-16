@@ -95,12 +95,14 @@ jobs:
       - name: Build and check size
         run: |
           npm run build
-          echo "## Build Size Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          du -sh .next/ >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Static files" >> $GITHUB_STEP_SUMMARY
-          du -sh .next/static/ >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No static files" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Build Size Report"
+            echo ""
+            du -sh .next/
+            echo ""
+            echo "### Static files"
+            du -sh .next/static/ 2>/dev/null || echo "No static files"
+          } >> "$GITHUB_STEP_SUMMARY"
         env:
           DATABASE_URL: "postgresql://user:pass@localhost:5432/db"
           JWT_SECRET: "build-time-secret"
