@@ -23,6 +23,9 @@ jobs:
   # Run CI checks first
   ci:
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      issues: write
 
   # Build and push Docker image
   docker:
