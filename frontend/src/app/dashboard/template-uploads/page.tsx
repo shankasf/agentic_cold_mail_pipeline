@@ -321,7 +321,7 @@ export default function TemplateUploadsPage() {
                 <div className="p-6">
                   <h3 className="text-lg font-semibold mb-4">Create Template from File</h3>
                   <p className="text-sm text-gray-500 mb-4">
-                    Create an email template using the content from "{selectedUpload.filename}"
+                    Create an email template using the content from &quot;{selectedUpload.filename}&quot;
                   </p>
 
                   <div className="space-y-4">

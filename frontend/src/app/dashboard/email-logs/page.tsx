@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Clock, Send, XCircle, Terminal, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -39,7 +39,7 @@ export default function EmailLogsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/email-logs?page=${page}`);
@@ -51,11 +51,11 @@ export default function EmailLogsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page]);
 
   useEffect(() => {
     fetchLogs();
-  }, [page]);
+  }, [fetchLogs]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {

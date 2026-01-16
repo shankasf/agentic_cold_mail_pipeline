@@ -318,7 +318,7 @@ export default function TemplatesPage() {
               {templates.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                    No templates yet. Click "Load Defaults" to get started with pre-made templates.
+                    No templates yet. Click &quot;Load Defaults&quot; to get started with pre-made templates.
                   </td>
                 </tr>
               )}
