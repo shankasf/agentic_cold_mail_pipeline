@@ -17,7 +17,7 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 SENDER_NAME = os.getenv('SENDER_NAME', 'Sagar Shankaran')
 SENDER_TITLE = os.getenv('SENDER_TITLE', 'Founder & CEO')
 COMPANY_NAME = os.getenv('COMPANY_NAME', 'CallSphere LLC')
-SENDER_EMAIL = os.getenv('SMTP_FROM', 'hello@callsphere.tech')
+SENDER_EMAIL = os.getenv('SMTP_FROM', 'sagar@callsphere.tech')
 BUSINESS_ADDRESS = os.getenv('BUSINESS_ADDRESS', '27 Orchard Pl, New York, NY 12601')
 CALENDLY_URL = os.getenv('CALENDLY_URL', 'https://calendly.com/sagar-callsphere/new-meeting')
 

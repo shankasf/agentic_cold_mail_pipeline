@@ -11,6 +11,8 @@ export async function GET(request: NextRequest) {
     const maxConfidence = searchParams.get('maxConfidence');
     const minDeliverability = searchParams.get('minDeliverability');
     const maxDeliverability = searchParams.get('maxDeliverability');
+    const date = searchParams.get('date'); // Filter by date (YYYY-MM-DD)
+    const businessId = searchParams.get('businessId'); // Filter by business for thread view
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
 
@@ -40,6 +42,24 @@ export async function GET(request: NextRequest) {
           mode: 'insensitive',
         },
       };
+    }
+
+    // Date filter - filter by createdAt or sentAt date
+    if (date) {
+      const startDate = new Date(date);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date);
+      endDate.setHours(23, 59, 59, 999);
+
+      where.OR = [
+        { createdAt: { gte: startDate, lte: endDate } },
+        { sentAt: { gte: startDate, lte: endDate } },
+      ];
+    }
+
+    // Business filter for thread view
+    if (businessId) {
+      where.businessId = businessId;
     }
 
     const [emails, total] = await Promise.all([

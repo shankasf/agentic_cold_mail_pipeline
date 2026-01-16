@@ -1,15 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Read",
+      "Bash",
       "Write",
       "Edit",
-      "Bash",
-      "NotebookEdit",
+      "MultiEdit",
+      "Read",
+      "Grep",
+      "Glob",
       "WebFetch",
-      "WebSearch",
-      "mcp__*"
-    ],
-    "deny": []
+      "Delete"
+    ]
   }
 }

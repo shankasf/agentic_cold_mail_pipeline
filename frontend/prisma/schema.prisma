@@ -7,6 +7,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// User role enum
+enum UserRole {
+  ADMIN
+  SALES_REP
+}
+
+// User model for authentication
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String?
+  role         UserRole  @default(SALES_REP)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
 // Upload status enum
 enum UploadStatus {
   QUEUED
@@ -44,15 +65,19 @@ enum ExportType {
   BATCH_ZIP
 }
 
-// Email event type enum
+// Email event type enum (AWS SES supported events)
 enum EmailEventType {
-  SENT
-  DELIVERED
-  OPEN
-  CLICK
-  REPLY
-  BOUNCE
-  COMPLAINT
+  SENT              // Send request successful
+  DELIVERED         // Successfully delivered to mail server
+  OPEN              // Recipient opened the email
+  CLICK             // Recipient clicked a link
+  BOUNCE            // Hard bounce - permanent rejection
+  COMPLAINT         // Marked as spam by recipient
+  REJECT            // Rejected (virus detected)
+  DELIVERY_DELAY    // Temporary delivery issue
+  SUBSCRIPTION      // Recipient updated subscription preferences
+  RENDERING_FAILURE // Template rendering failed
+  REPLY             // Recipient replied
 }
 
 // Suppression reason enum
@@ -60,6 +85,22 @@ enum SuppressionReason {
   BOUNCE
   COMPLAINT
   MANUAL
+}
+
+// Template category enum
+enum TemplateCategory {
+  SALES
+  DEMO
+  PARTNERSHIP
+  SUPPORT
+  WEBINAR
+  PRODUCT_LAUNCH
+}
+
+// Pipeline type enum
+enum PipelineType {
+  AGENTIC
+  TEMPLATE
 }
 
 // Uploads table
@@ -100,7 +141,7 @@ model ParsedChunk {
 // Businesses table
 model Business {
   id            String   @id @default(uuid())
-  canonicalName String   @map("canonical_name")
+  canonicalName String   @unique @map("canonical_name")
   website       String?
   industryGuess String?  @map("industry_guess")
   location      String?
@@ -181,25 +222,32 @@ model IndustryObservation {
 
 // Email drafts table
 model EmailDraft {
-  id                    String      @id @default(uuid())
-  businessId            String      @map("business_id")
-  contactId             String      @map("contact_id")
-  fromName              String      @default("CallSphere") @map("from_name")
-  fromEmail             String      @default("hello@callsphere.tech") @map("from_email")
+  id                    String       @id @default(uuid())
+  businessId            String       @map("business_id")
+  contactId             String       @map("contact_id")
+  fromName              String       @default("CallSphere") @map("from_name")
+  fromEmail             String       @default("sagar@callsphere.tech") @map("from_email")
   subject               String
-  bodyText              String      @map("body_text")
-  footerText            String      @map("footer_text")
-  personalizationTokens Json        @map("personalization_tokens") // { facts_used: [], pain_point?, industry? }
-  confidenceScore       Int         @default(0) @map("confidence_score")
-  deliverabilityScore   Int         @default(0) @map("deliverability_score")
-  spamFlags             Json        @default("[]") @map("spam_flags") // string[]
-  status                EmailStatus @default(DRAFT)
-  createdAt             DateTime    @default(now()) @map("created_at")
-  updatedAt             DateTime    @updatedAt @map("updated_at")
+  bodyText              String       @map("body_text")
+  footerText            String       @map("footer_text")
+  personalizationTokens Json         @map("personalization_tokens") // { facts_used: [], pain_point?, industry? }
+  confidenceScore       Int          @default(0) @map("confidence_score")
+  deliverabilityScore   Int          @default(0) @map("deliverability_score")
+  spamFlags             Json         @default("[]") @map("spam_flags") // string[]
+  status                EmailStatus  @default(DRAFT)
+  pipelineType          PipelineType @default(AGENTIC) @map("pipeline_type") // AGENTIC or TEMPLATE
+  templateId            String?      @map("template_id") // If from template pipeline
+  parentEmailId         String?      @map("parent_email_id") // For follow-up emails (thread)
+  threadId              String?      @map("thread_id") // Groups emails in same conversation
+  sentAt                DateTime?    @map("sent_at") // When email was actually sent
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
 
-  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  events   EmailEvent[]
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact     Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  events      EmailEvent[]
+  parentEmail EmailDraft?   @relation("EmailThread", fields: [parentEmailId], references: [id])
+  replies     EmailDraft[]  @relation("EmailThread")
 
   @@map("email_drafts")
 }
@@ -251,4 +299,87 @@ model AdminSettings {
   updatedAt             DateTime @updatedAt @map("updated_at")
 
   @@map("admin_settings")
+}
+
+// =============================================================================
+// TEMPLATE PIPELINE MODELS (Non-Agentic)
+// =============================================================================
+
+// Template file uploads (txt, pdf, docx) for creating templates
+model TemplateFileUpload {
+  id                String   @id @default(uuid())
+  filename          String
+  fileType          String   @map("file_type")
+  sizeBytes         Int      @map("size_bytes")
+  storagePath       String   @map("storage_path")
+  content           String   @default("") // Extracted text content
+  status            String   @default("QUEUED") // QUEUED, PARSED, FAILED
+  errorText         String?  @map("error_text")
+  uploadedAt        DateTime @default(now()) @map("uploaded_at")
+  createdTemplateId String?  @unique @map("created_template_id")
+
+  createdTemplate EmailTemplate? @relation(fields: [createdTemplateId], references: [id])
+
+  @@map("template_file_uploads")
+}
+
+// Email templates with variable placeholders
+model EmailTemplate {
+  id              String           @id @default(uuid())
+  category        TemplateCategory
+  name            String           // "Sales Outreach - SaaS"
+  description     String?
+  subjectTemplate String           @map("subject_template") // "{{company}} - Quick Question"
+  bodyTemplate    String           @map("body_template")    // "Hi {{name}},\n\n..."
+  variables       Json             @default("[\"name\", \"company\", \"role\", \"industry\"]") // Required variables
+  isActive        Boolean          @default(true) @map("is_active")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  uploads    TemplateUpload[]
+  sourceFile TemplateFileUpload?
+
+  @@map("email_templates")
+}
+
+// Template CSV uploads
+model TemplateUpload {
+  id           String       @id @default(uuid())
+  templateId   String       @map("template_id")
+  filename     String
+  fileType     String       @map("file_type")
+  sizeBytes    Int          @map("size_bytes")
+  storagePath  String       @map("storage_path")
+  totalRows    Int          @default(0) @map("total_rows")
+  processedRows Int         @default(0) @map("processed_rows")
+  status       UploadStatus @default(QUEUED)
+  progressText String?      @map("progress_text")
+  errorText    String?      @map("error_text")
+  uploadedAt   DateTime     @default(now()) @map("uploaded_at")
+
+  template EmailTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  rows     TemplateRow[]
+
+  @@map("template_uploads")
+}
+
+// Individual rows from template CSV
+model TemplateRow {
+  id           String   @id @default(uuid())
+  uploadId     String   @map("upload_id")
+  rowIndex     Int      @map("row_index")
+  email        String
+  name         String?
+  company      String?
+  role         String?
+  industry     String?
+  customFields Json     @default("{}") @map("custom_fields") // Any extra columns
+  status       String   @default("PENDING") // PENDING, PROCESSED, SKIPPED, ERROR
+  errorText    String?  @map("error_text")
+  emailDraftId String?  @map("email_draft_id") // Link to generated email
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  upload TemplateUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@map("template_rows")
 }

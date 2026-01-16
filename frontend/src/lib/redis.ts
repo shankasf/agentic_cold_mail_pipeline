@@ -1,51 +1,59 @@
-import Redis from 'ioredis';
+import type { Redis as RedisType } from 'ioredis';
 
 declare global {
   // eslint-disable-next-line no-var
-  var redis: Redis | undefined;
+  var redis: RedisType | undefined;
   // eslint-disable-next-line no-var
-  var redisPub: Redis | undefined;
+  var redisPub: RedisType | undefined;
   // eslint-disable-next-line no-var
-  var redisSub: Redis | undefined;
+  var redisSub: RedisType | undefined;
 }
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
-const redis =
-  global.redis ??
-  new Redis(redisUrl, {
-    maxRetriesPerRequest: null,
-  });
+// Lazy initialization to prevent build-time connection
+function getRedis(): RedisType {
+  if (!global.redis) {
+    const Redis = require('ioredis').default;
+    global.redis = new Redis(redisUrl, {
+      maxRetriesPerRequest: null,
+    });
+  }
+  return global.redis!;
+}
 
-// Separate connections for pub/sub (Redis requires dedicated connections for subscribe)
-const redisPub =
-  global.redisPub ??
-  new Redis(redisUrl, {
-    maxRetriesPerRequest: null,
-  });
+function getRedisPub(): RedisType {
+  if (!global.redisPub) {
+    const Redis = require('ioredis').default;
+    global.redisPub = new Redis(redisUrl, {
+      maxRetriesPerRequest: null,
+    });
+  }
+  return global.redisPub!;
+}
 
-const redisSub =
-  global.redisSub ??
-  new Redis(redisUrl, {
-    maxRetriesPerRequest: null,
-  });
+function getRedisSub(): RedisType {
+  if (!global.redisSub) {
+    const Redis = require('ioredis').default;
+    global.redisSub = new Redis(redisUrl, {
+      maxRetriesPerRequest: null,
+    });
+  }
+  return global.redisSub!;
+}
 
-// Store in global to prevent multiple instances in both dev and prod
-global.redis = redis;
-global.redisPub = redisPub;
-global.redisSub = redisSub;
-
-export { redis, redisPub, redisSub };
+// Export getters for lazy access
+export { getRedis as redis, getRedisPub as redisPub, getRedisSub as redisSub };
 
 // Channel for upload progress updates
 export const UPLOAD_PROGRESS_CHANNEL = 'upload:progress';
 
 // Publish upload progress
 export async function publishUploadProgress(uploadId: string, progress: string) {
-  await redisPub.publish(
+  await getRedisPub().publish(
     UPLOAD_PROGRESS_CHANNEL,
     JSON.stringify({ uploadId, progress, timestamp: Date.now() })
   );
 }
 
-export default redis;
+export default getRedis;

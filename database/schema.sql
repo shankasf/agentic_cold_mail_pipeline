@@ -133,7 +133,7 @@ CREATE TABLE email_drafts (
     business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
     contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
     from_name VARCHAR(100) DEFAULT 'CallSphere',
-    from_email VARCHAR(255) DEFAULT 'hello@callsphere.tech',
+    from_email VARCHAR(255) DEFAULT 'sagar@callsphere.tech',
     subject VARCHAR(500) NOT NULL,
     body_text TEXT NOT NULL,
     footer_text TEXT NOT NULL,

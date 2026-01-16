@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Download, CheckCircle, AlertTriangle, Send } from 'lucide-react';
+import { ArrowLeft, Download, CheckCircle, AlertTriangle, Send, Trash2 } from 'lucide-react';
 
 interface EmailDetail {
   id: string;
@@ -25,7 +25,7 @@ interface EmailDetail {
     id: string;
     canonicalName: string;
     website?: string;
-    evidence: Array<{
+    evidence?: Array<{
       evidenceType: string;
       extractedValue: string;
       confidence: number;
@@ -113,6 +113,22 @@ export default function EmailDetailPage() {
       setEmail({ ...email, status: 'NEEDS_REVIEW' });
     } catch (error) {
       alert('Failed to update status');
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!email) return;
+    if (!confirm('Are you sure you want to delete this email?')) return;
+    try {
+      const res = await fetch('/api/emails/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailIds: [email.id] }),
+      });
+      if (!res.ok) throw new Error('Failed to delete');
+      router.push('/dashboard/emails');
+    } catch (error) {
+      alert('Failed to delete email');
     }
   };
 
@@ -219,9 +235,9 @@ export default function EmailDetailPage() {
           {/* Evidence Panel */}
           <div className="card">
             <h2 className="text-lg font-semibold mb-4">Evidence Used</h2>
-            {email.business.evidence.length > 0 ? (
+            {(email.business.evidence?.length ?? 0) > 0 ? (
               <div className="space-y-4">
-                {email.business.evidence.slice(0, 5).map((ev, idx) => (
+                {email.business.evidence!.slice(0, 5).map((ev, idx) => (
                   <div key={idx} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="badge-info text-xs">{ev.evidenceType.replace('_', ' ')}</span>
@@ -270,6 +286,9 @@ export default function EmailDetailPage() {
                   Mark for Review
                 </button>
               )}
+              <button onClick={handleDelete} className="btn-danger w-full flex items-center justify-center gap-2">
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
             </div>
           </div>
 
