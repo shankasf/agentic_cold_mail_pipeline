@@ -1,0 +1,55 @@
+# Label configuration for auto-labeling PRs
+
+# Frontend changes
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: 'src/app/**/*'
+      - any-glob-to-any-file: 'src/components/**/*'
+
+# API changes
+api:
+  - changed-files:
+      - any-glob-to-any-file: 'src/app/api/**/*'
+
+# Database changes
+database:
+  - changed-files:
+      - any-glob-to-any-file: 'prisma/**/*'
+
+# Authentication changes
+auth:
+  - changed-files:
+      - any-glob-to-any-file: 'src/lib/auth.ts'
+      - any-glob-to-any-file: 'src/middleware.ts'
+      - any-glob-to-any-file: 'src/app/api/auth/**/*'
+      - any-glob-to-any-file: 'src/context/AuthContext.tsx'
+
+# Test changes
+tests:
+  - changed-files:
+      - any-glob-to-any-file: 'src/__tests__/**/*'
+      - any-glob-to-any-file: 'vitest.config.ts'
+
+# CI/CD changes
+ci-cd:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**/*'
+
+# Documentation changes
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.md'
+      - any-glob-to-any-file: 'docs/**/*'
+
+# Dependencies
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: 'package.json'
+      - any-glob-to-any-file: 'package-lock.json'
+
+# Configuration
+config:
+  - changed-files:
+      - any-glob-to-any-file: '*.config.*'
+      - any-glob-to-any-file: 'tsconfig.json'
+      - any-glob-to-any-file: 'tailwind.config.*'
