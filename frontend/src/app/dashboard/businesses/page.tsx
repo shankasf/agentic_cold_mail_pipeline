@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { Building2, Mail, FileText, ExternalLink, Search, ListPlus, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Building2, Mail, FileText, ExternalLink, Search, Sparkles, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp, Save, Edit2, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { format } from 'date-fns';
 
 interface Business {
@@ -19,11 +20,11 @@ interface Business {
   };
 }
 
-interface Template {
-  id: string;
+interface GeneratedTemplate {
   name: string;
-  category: string;
-  isActive: boolean;
+  subjectTemplate: string;
+  bodyTemplate: string;
+  description: string;
 }
 
 interface Filters {
@@ -55,8 +56,8 @@ const defaultFilters: Filters = {
 };
 
 export default function BusinessesPage() {
+  const router = useRouter();
   const [businesses, setBusinesses] = useState<Business[]>([]);
-  const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const [showFilters, setShowFilters] = useState(false);
@@ -69,15 +70,15 @@ export default function BusinessesPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
-  const [showSendModal, setShowSendModal] = useState(false);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('');
-  const [sending, setSending] = useState(false);
-  const [step, setStep] = useState<'select' | 'custom' | 'confirm'>('select');
-  const [customTemplate, setCustomTemplate] = useState({
-    subject: '',
-    body: '',
-  });
-  const [contactCount, setContactCount] = useState(0);
+
+  // AI Template Generation state
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [generatedTemplates, setGeneratedTemplates] = useState<GeneratedTemplate[]>([]);
+  const [aiInsights, setAiInsights] = useState('');
+  const [editingGeneratedIdx, setEditingGeneratedIdx] = useState<number | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState<number | null>(null);
+  const [purpose, setPurpose] = useState('');
 
   const activeFilterCount = Object.entries(filters).filter(
     ([key, value]) => value !== '' && key !== 'search'
@@ -124,25 +125,14 @@ export default function BusinessesPage() {
     }
   }, []);
 
-  const fetchTemplates = useCallback(async () => {
-    try {
-      const res = await fetch('/api/templates?active=true');
-      const data = await res.json();
-      setTemplates(data.filter((t: Template) => t.isActive));
-    } catch (error) {
-      console.error('Error fetching templates:', error);
-    }
-  }, []);
-
   useEffect(() => {
     const debounce = setTimeout(fetchBusinesses, 300);
     return () => clearTimeout(debounce);
   }, [fetchBusinesses]);
 
   useEffect(() => {
-    fetchTemplates();
     fetchFilterOptions();
-  }, [fetchTemplates, fetchFilterOptions]);
+  }, [fetchFilterOptions]);
 
   const updateFilter = (key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -203,97 +193,132 @@ export default function BusinessesPage() {
     }
   };
 
-  const openSendModal = async () => {
-    setShowSendModal(true);
-    setStep('select');
-    setSelectedTemplateId('');
-    setCustomTemplate({ subject: '', body: '' });
-
-    // Get contact count for selected businesses
-    try {
-      const res = await fetch('/api/businesses/contact-count', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ businessIds: selectedIds }),
-      });
-      const data = await res.json();
-      setContactCount(data.contactCount || 0);
-    } catch {
-      setContactCount(0);
-    }
+  // AI Template Generation handlers
+  const openAiModal = () => {
+    setShowAiModal(true);
+    setGeneratedTemplates([]);
+    setAiInsights('');
+    setEditingGeneratedIdx(null);
+    setPurpose('');
   };
 
-  const handleProceedToConfirm = () => {
-    if (step === 'select' && !selectedTemplateId) {
-      alert('Please select a template');
-      return;
-    }
-    if (step === 'custom' && (!customTemplate.subject || !customTemplate.body)) {
-      alert('Please fill in subject and body');
-      return;
-    }
-    setStep('confirm');
-  };
+  const generateTemplatesFromBusinesses = async () => {
+    if (selectedIds.length === 0 || !purpose.trim()) return;
 
-  const handleSendEmails = async () => {
-    if (selectedIds.length === 0) return;
+    setGenerating(true);
+    setGeneratedTemplates([]);
+    setAiInsights('');
 
-    setSending(true);
     try {
-      const payload: Record<string, unknown> = {
-        businessIds: selectedIds,
-      };
+      // Fetch business details to build context
+      const selectedBusinesses = selectAll
+        ? businesses
+        : businesses.filter(b => selectedIds.includes(b.id));
 
-      if (step === 'confirm' && selectedTemplateId) {
-        payload.templateId = selectedTemplateId;
-      } else {
-        payload.customSubject = customTemplate.subject;
-        payload.customBody = customTemplate.body;
-      }
+      // Build document content from selected businesses
+      const documentContent = selectedBusinesses.map(b => {
+        return `Company: ${b.canonicalName}
+Website: ${b.website || 'N/A'}
+Industry: ${b.industryGuess || 'Unknown'}
+Location: ${b.location || 'Unknown'}
+Contacts: ${b._count.contacts}
+Data Points: ${b._count.evidence}`;
+      }).join('\n\n---\n\n');
 
-      const res = await fetch('/api/businesses/send-template', {
+      // Get unique industries for context
+      const industries = [...new Set(selectedBusinesses.map(b => b.industryGuess).filter(Boolean))];
+
+      const res = await fetch('/api/templates/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          purpose: purpose.trim(),
+          documentContent: `Business Information:\n\n${documentContent}`,
+          contextHints: {
+            industry: industries.join(', '),
+            company_type: 'B2B prospects',
+          },
+        }),
       });
-
-      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to add to queue');
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to generate templates');
       }
 
-      alert(`Successfully added ${data.queued} emails to queue!\n${data.skipped > 0 ? `Skipped ${data.skipped} (no contacts or suppressed)` : ''}`);
-      setShowSendModal(false);
-      setSelectedIds([]);
-      setSelectAll(false);
-      setSelectedTemplateId('');
-      setStep('select');
+      const data = await res.json();
+      setGeneratedTemplates(data.template ? [data.template] : []);
+      setAiInsights(data.insights || '');
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to add to queue');
+      alert(error instanceof Error ? error.message : 'Failed to generate templates');
     } finally {
-      setSending(false);
+      setGenerating(false);
     }
   };
 
-  const closeSendModal = () => {
-    setShowSendModal(false);
-    setStep('select');
-    setSelectedTemplateId('');
-    setCustomTemplate({ subject: '', body: '' });
+  const handleSaveGeneratedTemplate = async (template: GeneratedTemplate, index: number) => {
+    setSavingTemplate(index);
+    try {
+      const res = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: 'SALES', // Default category for AI-generated templates
+          name: template.name,
+          description: template.description,
+          subjectTemplate: template.subjectTemplate,
+          bodyTemplate: template.bodyTemplate,
+          isActive: true,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save template');
+      }
+
+      // Remove saved template from generated list
+      setGeneratedTemplates(prev => prev.filter((_, i) => i !== index));
+
+      if (generatedTemplates.length === 1) {
+        setShowAiModal(false);
+        setPurpose('');
+        router.push('/dashboard/templates');
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to save template');
+    } finally {
+      setSavingTemplate(null);
+    }
+  };
+
+  const handleUpdateGeneratedTemplate = (index: number, field: keyof GeneratedTemplate, value: string) => {
+    setGeneratedTemplates(prev => prev.map((t, i) =>
+      i === index ? { ...t, [field]: value } : t
+    ));
+  };
+
+  const closeAiModal = () => {
+    if (!generating) {
+      setShowAiModal(false);
+      setGeneratedTemplates([]);
+      setAiInsights('');
+      setEditingGeneratedIdx(null);
+      setPurpose('');
+    }
   };
 
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Businesses</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Companies</h1>
         {selectedIds.length > 0 && (
           <button
-            onClick={openSendModal}
-            className="btn-primary flex items-center gap-2"
+            onClick={openAiModal}
+            className="btn-secondary flex items-center gap-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white border-0 hover:from-purple-600 hover:to-blue-600"
           >
-            <ListPlus className="w-4 h-4" />
-            Add to Queue ({selectAll ? totalCount : selectedIds.length} Selected)
+            <Sparkles className="w-4 h-4" />
+            Generate Template ({selectAll ? totalCount : selectedIds.length} Selected)
           </button>
         )}
       </div>
@@ -513,7 +538,7 @@ export default function BusinessesPage() {
                 <thead>
                   <tr>
                     <th className="px-4 py-3 text-left w-10"></th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Business</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Company</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Industry</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Location</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Contacts</th>
@@ -582,7 +607,7 @@ export default function BusinessesPage() {
                   {businesses.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
-                        No businesses found.
+                        No companies found.
                       </td>
                     </tr>
                   )}
@@ -615,164 +640,229 @@ export default function BusinessesPage() {
         )}
       </div>
 
-      {/* Send Template Modal - Multi-step */}
-      {showSendModal && (
+      {/* AI Template Generation Modal */}
+      {showAiModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={closeSendModal} />
-            <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full">
-              {/* Step 1: Select Template or Create Custom */}
-              {step === 'select' && (
-                <>
-                  <div className="p-6">
-                    <h3 className="text-lg font-semibold mb-2">Add Emails to Queue</h3>
-                    <p className="text-sm text-gray-500 mb-4">
-                      {selectAll ? totalCount : selectedIds.length} businesses selected ({contactCount} contacts)
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={closeAiModal} />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-gradient-to-r from-purple-500 to-blue-500 rounded-lg">
+                      <Sparkles className="w-5 h-5 text-white" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      AI Template Generator
+                    </h3>
+                  </div>
+                  <button
+                    onClick={closeAiModal}
+                    className="text-gray-400 hover:text-gray-600"
+                    disabled={generating}
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                {/* Purpose Input Step */}
+                {generatedTemplates.length === 0 && !generating && (
+                  <div className="mb-6">
+                    <p className="text-sm text-gray-600 mb-4">
+                      Tell us what you want these email templates for. AI will analyze the {selectAll ? totalCount : selectedIds.length} selected companies and generate personalized templates.
                     </p>
 
                     <div className="space-y-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Choose a template
+                          What do you want these templates for?
                         </label>
-                        <select
-                          value={selectedTemplateId}
-                          onChange={(e) => setSelectedTemplateId(e.target.value)}
-                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                        >
-                          <option value="">Select from saved templates...</option>
-                          {templates.map((template) => (
-                            <option key={template.id} value={template.id}>
-                              [{template.category.replace('_', ' ')}] {template.name}
-                            </option>
-                          ))}
-                        </select>
+                        <textarea
+                          value={purpose}
+                          onChange={(e) => setPurpose(e.target.value)}
+                          placeholder="e.g., Cold outreach to book demos for our AI voice agent product"
+                          rows={3}
+                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                        />
                       </div>
-
-                      <div className="text-center text-sm text-gray-500">or</div>
 
                       <button
-                        onClick={() => setStep('custom')}
-                        className="w-full btn-secondary"
+                        onClick={generateTemplatesFromBusinesses}
+                        disabled={!purpose.trim()}
+                        className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
                       >
-                        Create Custom Email
+                        <Sparkles className="w-4 h-4" />
+                        Generate Templates
                       </button>
                     </div>
-                  </div>
-                  <div className="bg-gray-50 px-6 py-3 flex justify-end gap-3">
-                    <button onClick={closeSendModal} className="btn-secondary">Cancel</button>
-                    <button
-                      onClick={handleProceedToConfirm}
-                      disabled={!selectedTemplateId}
-                      className="btn-primary disabled:opacity-50"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </>
-              )}
 
-              {/* Step 2: Custom Template */}
-              {step === 'custom' && (
-                <>
-                  <div className="p-6">
-                    <h3 className="text-lg font-semibold mb-2">Create Custom Email</h3>
-                    <p className="text-xs text-gray-500 mb-4">
-                      Use {'{{name}}'}, {'{{company}}'}, {'{{industry}}'} for personalization
-                    </p>
+                    <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                      <p className="text-sm text-blue-800 font-medium mb-2">Example purposes:</p>
+                      <ul className="text-xs text-blue-700 space-y-1">
+                        <li>- &quot;Book demos with these companies for our software&quot;</li>
+                        <li>- &quot;Follow up on previous conversations about partnership&quot;</li>
+                        <li>- &quot;Introduce our new product features&quot;</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
 
+                {/* Generating State */}
+                {generating && (
+                  <div className="flex flex-col items-center justify-center py-12">
+                    <Loader2 className="w-12 h-12 text-primary-600 animate-spin mb-4" />
+                    <p className="text-gray-600 font-medium">Analyzing {selectAll ? totalCount : selectedIds.length} companies...</p>
+                    <p className="text-sm text-gray-500 mt-1">Generating personalized templates</p>
+                  </div>
+                )}
+
+                {/* Generated Templates */}
+                {generatedTemplates.length > 0 && !generating && (
+                  <div className="space-y-6">
+                    {/* Insights */}
+                    {aiInsights && (
+                      <div className="p-4 bg-purple-50 rounded-lg">
+                        <p className="text-sm font-medium text-purple-800 mb-2">AI Insights</p>
+                        <p className="text-sm text-purple-700">{aiInsights}</p>
+                      </div>
+                    )}
+
+                    {/* Template Cards */}
                     <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
-                        <input
-                          type="text"
-                          value={customTemplate.subject}
-                          onChange={(e) => setCustomTemplate({ ...customTemplate, subject: e.target.value })}
-                          placeholder="e.g., Quick question about {{company}}"
-                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Body</label>
-                        <textarea
-                          value={customTemplate.body}
-                          onChange={(e) => setCustomTemplate({ ...customTemplate, body: e.target.value })}
-                          placeholder="Hi {{name}},&#10;&#10;I noticed that {{company}}..."
-                          rows={8}
-                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="bg-gray-50 px-6 py-3 flex justify-between">
-                    <button onClick={() => setStep('select')} className="btn-secondary">Back</button>
-                    <button
-                      onClick={handleProceedToConfirm}
-                      disabled={!customTemplate.subject || !customTemplate.body}
-                      className="btn-primary disabled:opacity-50"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </>
-              )}
+                      <p className="text-sm font-medium text-gray-700">
+                        Generated {generatedTemplates.length} template{generatedTemplates.length > 1 ? 's' : ''} -
+                        Review and save to use:
+                      </p>
 
-              {/* Step 3: Confirmation */}
-              {step === 'confirm' && (
-                <>
-                  <div className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
-                        <ListPlus className="w-6 h-6 text-amber-600" />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold">Confirm Add to Queue</h3>
-                        <p className="text-sm text-gray-500">Emails will be queued for sending</p>
-                      </div>
-                    </div>
+                      {generatedTemplates.map((template, idx) => (
+                        <div key={idx} className="border rounded-lg overflow-hidden">
+                          <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              {editingGeneratedIdx === idx ? (
+                                <input
+                                  type="text"
+                                  value={template.name}
+                                  onChange={(e) => handleUpdateGeneratedTemplate(idx, 'name', e.target.value)}
+                                  className="text-sm font-medium text-gray-900 border rounded px-2 py-1 flex-1"
+                                />
+                              ) : (
+                                <span className="text-sm font-medium text-gray-900">{template.name}</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {editingGeneratedIdx === idx ? (
+                                <button
+                                  onClick={() => setEditingGeneratedIdx(null)}
+                                  className="text-green-600 hover:text-green-800 text-sm font-medium"
+                                >
+                                  Done
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => setEditingGeneratedIdx(idx)}
+                                  className="text-blue-600 hover:text-blue-800"
+                                  title="Edit"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleSaveGeneratedTemplate(template, idx)}
+                                disabled={savingTemplate === idx}
+                                className="btn-primary text-sm py-1 px-3 flex items-center gap-1"
+                              >
+                                {savingTemplate === idx ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Save className="w-3 h-3" />
+                                )}
+                                Save
+                              </button>
+                              <button
+                                onClick={() => setGeneratedTemplates(prev => prev.filter((_, i) => i !== idx))}
+                                className="text-red-600 hover:text-red-800"
+                                title="Discard"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
 
-                    <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-500">Businesses</p>
-                          <p className="font-semibold text-lg">{selectAll ? totalCount : selectedIds.length}</p>
+                          <div className="p-4 space-y-3">
+                            {editingGeneratedIdx === idx ? (
+                              <>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                                  <input
+                                    type="text"
+                                    value={template.description}
+                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'description', e.target.value)}
+                                    className="w-full text-sm rounded border px-2 py-1"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-500 mb-1">Subject</label>
+                                  <input
+                                    type="text"
+                                    value={template.subjectTemplate}
+                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'subjectTemplate', e.target.value)}
+                                    className="w-full text-sm rounded border px-2 py-1"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs font-medium text-gray-500 mb-1">Body</label>
+                                  <textarea
+                                    value={template.bodyTemplate}
+                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'bodyTemplate', e.target.value)}
+                                    rows={8}
+                                    className="w-full text-sm rounded border px-2 py-1 font-mono"
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <p className="text-xs text-gray-500">{template.description}</p>
+                                <div className="bg-gray-50 rounded p-3">
+                                  <p className="text-xs text-gray-500 mb-1">Subject:</p>
+                                  <p className="text-sm font-medium">{template.subjectTemplate}</p>
+                                </div>
+                                <div className="bg-gray-50 rounded p-3">
+                                  <p className="text-xs text-gray-500 mb-1">Body:</p>
+                                  <pre className="text-sm whitespace-pre-wrap font-sans">{template.bodyTemplate}</pre>
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-gray-500">Contacts</p>
-                          <p className="font-semibold text-lg">{contactCount}</p>
-                        </div>
-                      </div>
+                      ))}
                     </div>
 
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
-                      <p className="text-blue-800">
-                        <strong>Note:</strong> Emails will be queued and sent according to your daily quota.
-                        Suppressed emails will be automatically skipped.
+                    {/* Regenerate */}
+                    <div className="flex items-center justify-between pt-4 border-t">
+                      <button
+                        onClick={() => {
+                          setGeneratedTemplates([]);
+                          setAiInsights('');
+                          setPurpose('');
+                        }}
+                        className="btn-secondary"
+                      >
+                        Start Over
+                      </button>
+                      <p className="text-sm text-gray-500">
+                        {generatedTemplates.length} template{generatedTemplates.length > 1 ? 's' : ''} remaining
                       </p>
                     </div>
+                  </div>
+                )}
+              </div>
 
-                    <p className="mt-4 text-center text-gray-700">
-                      Add <strong>{contactCount}</strong> emails to queue?
-                    </p>
-                  </div>
-                  <div className="bg-gray-50 px-6 py-3 flex justify-between">
-                    <button onClick={() => setStep(selectedTemplateId ? 'select' : 'custom')} className="btn-secondary">
-                      Back
-                    </button>
-                    <button
-                      onClick={handleSendEmails}
-                      disabled={sending}
-                      className="btn-primary flex items-center gap-2 bg-green-600 hover:bg-green-700 border-green-600"
-                    >
-                      {sending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <ListPlus className="w-4 h-4" />
-                      )}
-                      {sending ? 'Adding...' : 'Yes, Add to Queue'}
-                    </button>
-                  </div>
-                </>
+              {!generating && generatedTemplates.length === 0 && (
+                <div className="bg-gray-50 px-6 py-3 flex justify-end">
+                  <button onClick={closeAiModal} className="btn-secondary">
+                    Cancel
+                  </button>
+                </div>
               )}
             </div>
           </div>

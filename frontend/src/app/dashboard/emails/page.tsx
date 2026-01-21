@@ -26,7 +26,15 @@ interface EmailDraft {
   };
 }
 
-const statusOptions = ['ALL', 'DRAFT', 'NEEDS_REVIEW', 'APPROVED', 'SENT', 'BOUNCED', 'COMPLAINT'];
+const statusOptions = [
+  { value: 'ALL', label: 'All' },
+  { value: 'DRAFT', label: 'Draft' },
+  { value: 'NEEDS_REVIEW', label: 'Review' },
+  { value: 'APPROVED', label: 'Ready' },
+  { value: 'SENT', label: 'Sent' },
+  { value: 'BOUNCED', label: 'Failed' },
+  { value: 'COMPLAINT', label: 'Spam' },
+];
 
 export default function EmailsPage() {
   const [emails, setEmails] = useState<EmailDraft[]>([]);
@@ -74,13 +82,13 @@ export default function EmailsPage() {
       case 'NEEDS_REVIEW':
         return <span className="badge-warning"><AlertCircle className="w-3 h-3 mr-1" />Review</span>;
       case 'APPROVED':
-        return <span className="badge-success"><CheckCircle className="w-3 h-3 mr-1" />Approved</span>;
+        return <span className="badge-success"><CheckCircle className="w-3 h-3 mr-1" />Ready</span>;
       case 'SENT':
         return <span className="badge-success"><Send className="w-3 h-3 mr-1" />Sent</span>;
       case 'BOUNCED':
-        return <span className="badge-danger">Bounced</span>;
+        return <span className="badge-danger">Failed</span>;
       case 'COMPLAINT':
-        return <span className="badge-danger">Complaint</span>;
+        return <span className="badge-danger">Spam</span>;
       default:
         return <span className="badge-gray">{status}</span>;
     }
@@ -297,7 +305,7 @@ export default function EmailsPage() {
     <div>
       {/* Header - responsive */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Email Queue</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Emails</h1>
         <div className="flex flex-wrap gap-2 sm:gap-3">
           {selectedIds.length > 0 && (
             <>
@@ -321,8 +329,8 @@ export default function EmailsPage() {
           )}
           <Link href="/dashboard/emails/threads" className="btn-secondary flex items-center gap-1 sm:gap-2 text-sm sm:text-base">
             <MessageSquare className="w-4 h-4" />
-            <span className="hidden sm:inline">View Threads</span>
-            <span className="sm:hidden">Threads</span>
+            <span className="hidden sm:inline">Conversations</span>
+            <span className="sm:hidden">Convos</span>
           </Link>
           <button onClick={handleExportCsv} className="btn-secondary flex items-center gap-1 sm:gap-2 text-sm sm:text-base">
             <Download className="w-4 h-4" />
@@ -364,18 +372,18 @@ export default function EmailsPage() {
           <div className="flex gap-2 overflow-x-auto min-w-0">
             {statusOptions.map((s) => (
               <button
-                key={s}
+                key={s.value}
                 onClick={() => {
-                  setStatus(s);
+                  setStatus(s.value === 'ALL' ? 'ALL' : s.value);
                   setPage(1);
                 }}
                 className={`px-3 py-1 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
-                  status === s
+                  status === s.value
                     ? 'bg-primary-600 text-white'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
-                {s.replace('_', ' ')}
+                {s.label}
               </button>
             ))}
           </div>
@@ -419,10 +427,10 @@ export default function EmailsPage() {
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-sm">
                       <span className={email.confidenceScore >= 70 ? 'text-green-600' : 'text-yellow-600'}>
-                        Conf: {email.confidenceScore}%
+                        Quality: {email.confidenceScore}%
                       </span>
                       <span className={email.deliverabilityScore >= 70 ? 'text-green-600' : 'text-yellow-600'}>
-                        Deliv: {email.deliverabilityScore}%
+                        Safety: {email.deliverabilityScore}%
                       </span>
                       <span className="text-gray-500">
                         {format(new Date(email.createdAt), 'MMM d, HH:mm')}
@@ -489,8 +497,8 @@ export default function EmailsPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Business</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">To</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Confidence</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Deliverability</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Quality</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Safety</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>

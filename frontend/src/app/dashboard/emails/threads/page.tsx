@@ -81,7 +81,7 @@ export default function ThreadsPage() {
             <Mail className="w-5 h-5" />
           </Link>
           <ChevronRight className="w-4 h-4 text-gray-400" />
-          <h1 className="text-2xl font-bold text-gray-900">Email Threads</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Conversations</h1>
         </div>
       </div>
 

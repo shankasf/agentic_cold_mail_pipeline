@@ -165,7 +165,7 @@ export default function AnalyticsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Email Analytics</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
         <div className="flex gap-2">
           {[7, 14, 30].map((d) => (
             <button
@@ -402,7 +402,7 @@ export default function AnalyticsPage() {
                 <p className="font-bold">{analytics.overview.totalEmails}</p>
               </div>
               <div className="p-2 bg-gray-50 rounded">
-                <p className="text-gray-500">Businesses</p>
+                <p className="text-gray-500">Companies</p>
                 <p className="font-bold">{analytics.overview.totalBusinesses}</p>
               </div>
               <div className="p-2 bg-gray-50 rounded">

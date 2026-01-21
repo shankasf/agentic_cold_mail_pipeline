@@ -30,7 +30,11 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(templates);
+    return NextResponse.json(templates, {
+      headers: {
+        'Cache-Control': 'private, max-age=60, stale-while-revalidate=300',
+      },
+    });
   } catch (error) {
     console.error('Error fetching templates:', error);
     return NextResponse.json(

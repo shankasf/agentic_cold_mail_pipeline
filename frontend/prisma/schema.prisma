@@ -153,6 +153,9 @@ model Business {
   observations IndustryObservation[]
   emailDrafts  EmailDraft[]
 
+  @@index([industryGuess])
+  @@index([location])
+  @@index([createdAt])
   @@map("businesses")
 }
 
@@ -169,6 +172,8 @@ model Contact {
   business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
   emailDrafts EmailDraft[]
 
+  @@index([businessId])
+  @@index([createdAt])
   @@map("contacts")
 }
 
@@ -187,6 +192,8 @@ model BusinessEvidence {
   upload   Upload      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   chunk    ParsedChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
 
+  @@index([businessId])
+  @@index([uploadId])
   @@map("business_evidence")
 }
 
@@ -217,6 +224,8 @@ model IndustryObservation {
   business Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   chunk    ParsedChunk @relation(fields: [evidenceChunkId], references: [id], onDelete: Cascade)
 
+  @@index([businessId])
+  @@index([industry])
   @@map("industry_observations")
 }
 
@@ -249,6 +258,11 @@ model EmailDraft {
   parentEmail EmailDraft?   @relation("EmailThread", fields: [parentEmailId], references: [id])
   replies     EmailDraft[]  @relation("EmailThread")
 
+  @@index([businessId])
+  @@index([contactId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([threadId])
   @@map("email_drafts")
 }
 
@@ -274,6 +288,9 @@ model EmailEvent {
 
   emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
 
+  @@index([emailDraftId])
+  @@index([eventType])
+  @@index([createdAt])
   @@map("email_events")
 }
 
@@ -381,5 +398,7 @@ model TemplateRow {
 
   upload TemplateUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
+  @@index([uploadId])
+  @@index([status])
   @@map("template_rows")
 }

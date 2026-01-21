@@ -62,7 +62,7 @@ export default function BusinessDetailPage() {
   }
 
   if (!business) {
-    return <div className="card text-center py-8">Business not found</div>;
+    return <div className="card text-center py-8">Company not found</div>;
   }
 
   return (
@@ -93,7 +93,7 @@ export default function BusinessDetailPage() {
         <div className="lg:col-span-2 space-y-6">
           {/* Business Info */}
           <div className="card">
-            <h2 className="text-lg font-semibold mb-4">Business Information</h2>
+            <h2 className="text-lg font-semibold mb-4">Company Information</h2>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-gray-500">Industry</p>
@@ -118,7 +118,7 @@ export default function BusinessDetailPage() {
           <div className="card">
             <h2 className="text-lg font-semibold mb-4">
               <FileText className="w-5 h-5 inline mr-2" />
-              Evidence ({business.evidence.length})
+              Insights ({business.evidence.length})
             </h2>
             {business.evidence.length > 0 ? (
               <div className="space-y-4">
@@ -126,7 +126,7 @@ export default function BusinessDetailPage() {
                   <div key={ev.id} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="badge-info text-xs">{ev.evidenceType.replace('_', ' ')}</span>
-                      <span className="text-sm text-gray-500">{ev.confidence}% confidence</span>
+                      <span className="text-sm text-gray-500">{ev.confidence}% quality</span>
                     </div>
                     <p className="font-medium text-gray-900 mb-2">{ev.extractedValue}</p>
                     <p className="text-sm text-gray-500 line-clamp-2">
@@ -136,7 +136,7 @@ export default function BusinessDetailPage() {
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500">No evidence recorded</p>
+              <p className="text-gray-500">No insights recorded</p>
             )}
           </div>
 
@@ -157,11 +157,11 @@ export default function BusinessDetailPage() {
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm text-gray-500">{email.contact.email}</span>
                       <span className={`badge-${email.status === 'APPROVED' || email.status === 'SENT' ? 'success' : email.status === 'NEEDS_REVIEW' ? 'warning' : 'info'}`}>
-                        {email.status.replace('_', ' ')}
+                        {email.status === 'APPROVED' ? 'Ready' : email.status === 'NEEDS_REVIEW' ? 'Review' : email.status === 'BOUNCED' ? 'Failed' : email.status === 'COMPLAINT' ? 'Spam' : email.status}
                       </span>
                     </div>
                     <p className="font-medium text-gray-900">{email.subject}</p>
-                    <p className="text-sm text-gray-500">Confidence: {email.confidenceScore}%</p>
+                    <p className="text-sm text-gray-500">Quality: {email.confidenceScore}%</p>
                   </Link>
                 ))}
               </div>
@@ -186,7 +186,7 @@ export default function BusinessDetailPage() {
                     {contact.name && <p className="text-sm text-gray-600">{contact.name}</p>}
                     {contact.role && <p className="text-xs text-gray-500">{contact.role}</p>}
                     <p className="text-xs text-gray-400 mt-1">
-                      Confidence: {contact.sourceConfidence}%
+                      Quality: {contact.sourceConfidence}%
                     </p>
                   </div>
                 ))}

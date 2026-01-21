@@ -90,6 +90,22 @@ class GatekeeperOutput(BaseModel):
     reasoning: str = Field(description="Brief explanation of the decision")
 
 
+# Column Mapper Agent Schemas
+class ColumnMapping(BaseModel):
+    """A single column mapping from source to target schema field."""
+    source_column: str = Field(description="The original column name from the uploaded file")
+    target_field: str = Field(description="The schema field to map to: email, business_name, website, industry, location, contact_name, role, or 'unmapped' if no match")
+    confidence: int = Field(ge=0, le=100, description="Confidence score 0-100 for this mapping")
+    reasoning: str = Field(description="Brief explanation of why this mapping was chosen")
+
+
+class ColumnMapperOutput(BaseModel):
+    """Output from the Column Mapper Agent."""
+    mappings: list[ColumnMapping] = Field(description="List of column mappings")
+    unmapped_columns: list[str] = Field(default_factory=list, description="Columns that couldn't be mapped to any schema field")
+    warnings: list[str] = Field(default_factory=list, description="Any warnings about data quality or ambiguous mappings")
+
+
 # Full Pipeline Output
 class EmailGenerationResult(BaseModel):
     """Complete result from the email generation pipeline."""

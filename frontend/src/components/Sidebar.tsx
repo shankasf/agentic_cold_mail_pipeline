@@ -13,7 +13,6 @@ import {
   Home,
   ScrollText,
   FileText,
-  Zap,
   Menu,
   X,
   LogOut,
@@ -22,25 +21,20 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
-// AI Pipeline navigation
-const aiPipelineNav = [
-  { name: 'Dashboard', href: '/dashboard', icon: Home },
-  { name: 'AI Uploads', href: '/dashboard/uploads', icon: Upload },
-  { name: 'Businesses', href: '/dashboard/businesses', icon: Building2 },
-];
-
-// Template Pipeline navigation
-const templatePipelineNav = [
+// Create section - importing data and generating emails
+const createNav = [
+  { name: 'Overview', href: '/dashboard', icon: Home },
+  { name: 'Import Data', href: '/dashboard/uploads', icon: Upload },
+  { name: 'Companies', href: '/dashboard/businesses', icon: Building2 },
   { name: 'Templates', href: '/dashboard/templates', icon: FileText },
-  { name: 'Template Uploads', href: '/dashboard/template-uploads', icon: Zap },
 ];
 
-// Shared navigation (available to all users)
-const sharedNav = [
-  { name: 'All Emails', href: '/dashboard/emails', icon: Mail },
-  { name: 'Email Logs', href: '/dashboard/email-logs', icon: ScrollText },
-  { name: 'Exports', href: '/dashboard/exports', icon: Download },
-  { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+// Manage section - reviewing and sending emails
+const manageNav = [
+  { name: 'Emails', href: '/dashboard/emails', icon: Mail },
+  { name: 'Activity', href: '/dashboard/email-logs', icon: ScrollText },
+  { name: 'Downloads', href: '/dashboard/exports', icon: Download },
+  { name: 'Reports', href: '/dashboard/analytics', icon: BarChart3 },
 ];
 
 // Admin-only navigation
@@ -51,7 +45,7 @@ const adminNav = [
 
 function NavSection({ title, items, pathname, onNavigate }: {
   title: string;
-  items: typeof aiPipelineNav;
+  items: typeof createNav;
   pathname: string;
   onNavigate?: () => void;
 }) {
@@ -126,7 +120,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         <div className="flex h-full flex-col">
           <div className="flex h-16 items-center justify-between px-6 shrink-0">
-            <span className="text-xl font-bold text-white">Cold Mail Pipeline</span>
+            <span className="text-xl font-bold text-white">Outreach</span>
             <button
               onClick={onClose}
               className="lg:hidden text-gray-400 hover:text-white"
@@ -136,9 +130,8 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </button>
           </div>
           <nav className="flex-1 overflow-y-auto px-3 py-4">
-            <NavSection title="AI Pipeline" items={aiPipelineNav} pathname={pathname} onNavigate={onClose} />
-            <NavSection title="Template Pipeline" items={templatePipelineNav} pathname={pathname} onNavigate={onClose} />
-            <NavSection title="Emails & Reports" items={sharedNav} pathname={pathname} onNavigate={onClose} />
+            <NavSection title="Create" items={createNav} pathname={pathname} onNavigate={onClose} />
+            <NavSection title="Manage" items={manageNav} pathname={pathname} onNavigate={onClose} />
             {!loading && isAdmin && (
               <NavSection title="Admin" items={adminNav} pathname={pathname} onNavigate={onClose} />
             )}
@@ -165,7 +158,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               )}
               {loggingOut ? 'Logging out...' : 'Logout'}
             </button>
-            <p className="text-xs text-gray-500">Agentic Cold Mail Pipeline v1.0</p>
+            <p className="text-xs text-gray-500">Outreach v1.0</p>
           </div>
         </div>
       </aside>
@@ -184,7 +177,7 @@ export function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
       >
         <Menu className="h-6 w-6" />
       </button>
-      <span className="text-lg font-bold text-white">Cold Mail Pipeline</span>
+      <span className="text-lg font-bold text-white">Outreach</span>
       <div className="w-6" />
     </header>
   );

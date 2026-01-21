@@ -103,9 +103,14 @@ export async function POST(request: NextRequest) {
         }
 
         // Prepare variables for template
+        // Extract first name from full name
+        const fullName = contact.name || '';
+        const firstName = fullName.split(' ')[0] || 'there';
+
         const variables = {
           email: contact.email,
-          name: contact.name || 'there',
+          name: fullName || 'there',
+          first_name: firstName,
           company: business.canonicalName,
           role: contact.role || '',
           industry: business.industryGuess || '',

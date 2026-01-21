@@ -56,4 +56,69 @@ export async function publishUploadProgress(uploadId: string, progress: string) 
   );
 }
 
+// =============================================================================
+// CACHING UTILITIES
+// =============================================================================
+
+// Cache TTLs in seconds
+export const CACHE_TTL = {
+  ANALYTICS: 300,      // 5 minutes
+  BUSINESSES: 60,      // 1 minute
+  EMAILS: 60,          // 1 minute
+  TEMPLATES: 300,      // 5 minutes
+  INDUSTRY_LIST: 600,  // 10 minutes
+} as const;
+
+// Get cached data
+export async function getCached<T>(key: string): Promise<T | null> {
+  try {
+    const cached = await getRedis().get(key);
+    if (cached) {
+      return JSON.parse(cached) as T;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Set cached data with TTL
+export async function setCache<T>(key: string, data: T, ttlSeconds: number): Promise<void> {
+  try {
+    await getRedis().setex(key, ttlSeconds, JSON.stringify(data));
+  } catch {
+    // Silently fail - caching is optional
+  }
+}
+
+// Delete cached data
+export async function deleteCache(key: string): Promise<void> {
+  try {
+    await getRedis().del(key);
+  } catch {
+    // Silently fail
+  }
+}
+
+// Delete cached data by pattern
+export async function deleteCachePattern(pattern: string): Promise<void> {
+  try {
+    const keys = await getRedis().keys(pattern);
+    if (keys.length > 0) {
+      await getRedis().del(...keys);
+    }
+  } catch {
+    // Silently fail
+  }
+}
+
+// Cache key generators
+export const cacheKey = {
+  analytics: (timeRange: string) => `cache:analytics:${timeRange}`,
+  businesses: (params: string) => `cache:businesses:${params}`,
+  emails: (params: string) => `cache:emails:${params}`,
+  templates: () => 'cache:templates',
+  industries: () => 'cache:industries',
+} as const;
+
 export default getRedis;

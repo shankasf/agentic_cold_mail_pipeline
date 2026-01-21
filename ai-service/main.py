@@ -18,6 +18,7 @@ import uvicorn
 
 import config
 from pipeline import run_pipeline, recheck_compliance
+from email_agents import map_columns, get_mapping_dict, generate_templates
 
 # Redis for progress updates
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
@@ -94,6 +95,43 @@ class RecheckComplianceResponse(BaseModel):
     spamFlags: list[str]
     suggestions: str | None
     footerText: str
+
+
+class MapColumnsRequest(BaseModel):
+    headers: list[str]
+    sampleRows: list[dict] = []
+
+
+class ColumnMappingItem(BaseModel):
+    sourceColumn: str
+    targetField: str
+    confidence: int
+    reasoning: str
+
+
+class MapColumnsResponse(BaseModel):
+    mappings: list[ColumnMappingItem]
+    mappingDict: dict[str, str]  # Simple source -> target mapping for easy use
+    unmappedColumns: list[str]
+    warnings: list[str]
+
+
+class GenerateTemplatesRequest(BaseModel):
+    purpose: str
+    documentContent: str | None = None
+    contextHints: dict | None = None
+
+
+class GeneratedTemplateItem(BaseModel):
+    name: str
+    subjectTemplate: str
+    bodyTemplate: str
+    description: str
+
+
+class GenerateTemplatesResponse(BaseModel):
+    template: GeneratedTemplateItem
+    insights: str
 
 
 # Health check
@@ -175,6 +213,88 @@ async def recheck_compliance_endpoint(request: RecheckComplianceRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Compliance check error: {str(e)}")
+
+
+# Map columns using AI
+@app.post("/map-columns", response_model=MapColumnsResponse)
+async def map_columns_endpoint(request: MapColumnsRequest):
+    """
+    Use AI to intelligently map source columns to target schema fields.
+    Understands semantic equivalence like "Company Name" = "Business Name".
+    """
+    if not request.headers:
+        raise HTTPException(status_code=400, detail="No headers provided")
+
+    try:
+        # Call the column mapper agent
+        result = await map_columns(
+            headers=request.headers,
+            sample_rows=request.sampleRows,
+        )
+
+        # Convert to response format
+        mappings = [
+            ColumnMappingItem(
+                sourceColumn=m.source_column,
+                targetField=m.target_field,
+                confidence=m.confidence,
+                reasoning=m.reasoning,
+            )
+            for m in result.mappings
+        ]
+
+        # Get simple mapping dict for easy use
+        mapping_dict = get_mapping_dict(result)
+
+        return MapColumnsResponse(
+            mappings=mappings,
+            mappingDict=mapping_dict,
+            unmappedColumns=result.unmapped_columns,
+            warnings=result.warnings,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Column mapping error: {str(e)}")
+
+
+# Generate templates based on purpose
+@app.post("/generate-templates", response_model=GenerateTemplatesResponse)
+async def generate_templates_endpoint(request: GenerateTemplatesRequest):
+    """
+    Generate email templates based on user's stated purpose using AI.
+    Returns professional templates that pass spam filters.
+    """
+    if not request.purpose or len(request.purpose.strip()) < 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Purpose is required and must be at least 5 characters"
+        )
+
+    try:
+        result = await generate_templates(
+            purpose=request.purpose,
+            document_content=request.documentContent,
+            context_hints=request.contextHints,
+        )
+
+        # Convert to response format
+        template = GeneratedTemplateItem(
+            name=result.template.name,
+            subjectTemplate=result.template.subject_template,
+            bodyTemplate=result.template.body_template,
+            description=result.template.description,
+        )
+
+        return GenerateTemplatesResponse(
+            template=template,
+            insights=result.insights,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Template generation error: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

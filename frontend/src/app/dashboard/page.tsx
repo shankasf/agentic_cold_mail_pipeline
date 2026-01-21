@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
+import { fetcher, defaultSWRConfig } from '@/lib/swr';
 import {
   PieChart,
   Pie,
@@ -101,6 +103,17 @@ const STATUS_COLORS: Record<string, string> = {
   REPLIED: '#8b5cf6',
 };
 
+// Simplified status display labels
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Draft',
+  NEEDS_REVIEW: 'Review',
+  APPROVED: 'Ready',
+  SENT: 'Sent',
+  BOUNCED: 'Failed',
+  COMPLAINT: 'Spam',
+  REPLIED: 'Replied',
+};
+
 const PIE_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899'];
 
 function DashboardSkeleton() {
@@ -140,37 +153,26 @@ function DashboardSkeleton() {
 }
 
 export default function DashboardPage() {
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState(7);
   const [customDate, setCustomDate] = useState('');
   const [filterMode, setFilterMode] = useState<'preset' | 'custom'>('preset');
 
-  const fetchAnalytics = useCallback(() => {
-    setLoading(true);
-    setError(null);
+  // Build URL based on filter mode
+  const apiUrl = filterMode === 'custom' && customDate
+    ? `/api/analytics?date=${customDate}`
+    : `/api/analytics?days=${days}`;
 
-    let url = `/api/analytics?days=${days}`;
-    if (filterMode === 'custom' && customDate) {
-      url = `/api/analytics?date=${customDate}`;
+  // Use SWR for data fetching with caching and deduplication
+  const { data: analytics, error, isLoading, mutate } = useSWR<Analytics>(
+    apiUrl,
+    fetcher,
+    {
+      ...defaultSWRConfig,
+      refreshInterval: 300000, // Refresh every 5 minutes
     }
+  );
 
-    fetch(url)
-      .then((res) => {
-        if (!res.ok) throw new Error('Failed to load analytics');
-        return res.json();
-      })
-      .then(setAnalytics)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [days, filterMode, customDate]);
-
-  useEffect(() => {
-    fetchAnalytics();
-  }, [fetchAnalytics]);
-
-  if (loading) {
+  if (isLoading) {
     return <DashboardSkeleton />;
   }
 
@@ -178,8 +180,8 @@ export default function DashboardPage() {
     return (
       <ErrorState
         title="Failed to load dashboard"
-        message={error || 'Unable to fetch analytics data'}
-        onRetry={fetchAnalytics}
+        message={error?.message || 'Unable to fetch analytics data'}
+        onRetry={() => mutate()}
       />
     );
   }
@@ -188,7 +190,7 @@ export default function DashboardPage() {
   const statusPieData = Object.entries(analytics.statusBreakdown)
     .filter(([_, count]) => count > 0)
     .map(([name, value]) => ({
-      name: name.replace('_', ' '),
+      name: STATUS_LABELS[name] || name.replace('_', ' '),
       value,
       color: STATUS_COLORS[name] || '#6b7280',
     }));
@@ -268,7 +270,7 @@ export default function DashboardPage() {
               <Building2 className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-xs font-medium text-green-600 uppercase tracking-wide">Businesses</p>
+              <p className="text-xs font-medium text-green-600 uppercase tracking-wide">Companies</p>
               <p className="text-2xl font-bold text-green-700">{analytics.overview.totalBusinesses.toLocaleString()}</p>
             </div>
           </div>
@@ -668,7 +670,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between p-3 rounded-lg bg-blue-50 border border-blue-200">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-5 h-5 text-blue-600" />
-                  <span className="text-sm font-medium text-blue-800">Ready to Send</span>
+                  <span className="text-sm font-medium text-blue-800">Ready</span>
                 </div>
                 <span className="text-lg font-bold text-blue-700">{analytics.statusBreakdown.APPROVED}</span>
               </div>
@@ -698,7 +700,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between p-3 rounded-lg bg-red-50 border border-red-200">
                 <div className="flex items-center gap-2">
                   <TrendingDown className="w-5 h-5 text-red-500" />
-                  <span className="text-sm font-medium text-red-800">Bounced</span>
+                  <span className="text-sm font-medium text-red-800">Failed</span>
                 </div>
                 <span className="text-lg font-bold text-red-700">{analytics.statusBreakdown.BOUNCED}</span>
               </div>

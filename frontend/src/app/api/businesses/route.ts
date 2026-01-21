@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 
+// Helper to apply count filters
+function applyCountFilters(
+  businesses: any[],
+  filters: {
+    minContacts?: number;
+    maxContacts?: number;
+    minEvidence?: number;
+    maxEvidence?: number;
+    minDrafts?: number;
+    maxDrafts?: number;
+  }
+) {
+  return businesses.filter((b) => {
+    if (filters.minContacts !== undefined && b._count.contacts < filters.minContacts) return false;
+    if (filters.maxContacts !== undefined && b._count.contacts > filters.maxContacts) return false;
+    if (filters.minEvidence !== undefined && b._count.evidence < filters.minEvidence) return false;
+    if (filters.maxEvidence !== undefined && b._count.evidence > filters.maxEvidence) return false;
+    if (filters.minDrafts !== undefined && b._count.emailDrafts < filters.minDrafts) return false;
+    if (filters.maxDrafts !== undefined && b._count.emailDrafts > filters.maxDrafts) return false;
+    return true;
+  });
+}
+
 // GET /api/businesses - List businesses
 export async function GET(request: NextRequest) {
   try {
@@ -17,6 +40,7 @@ export async function GET(request: NextRequest) {
     const dateFrom = searchParams.get('dateFrom');
     const dateTo = searchParams.get('dateTo');
     const all = searchParams.get('all') === 'true';
+    const includeContacts = searchParams.get('includeContacts') === 'true';
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '20');
 
@@ -44,9 +68,16 @@ export async function GET(request: NextRequest) {
       if (dateTo) where.createdAt.lte = new Date(dateTo + 'T23:59:59.999Z');
     }
 
-    // Count-based filters require filtering after fetching or using raw queries
-    // We'll handle these with having clauses via raw query for efficiency
-    const hasCountFilters = minContacts || maxContacts || minEvidence || maxEvidence || minDrafts || maxDrafts;
+    // Parse count filters
+    const countFilters = {
+      minContacts: minContacts ? parseInt(minContacts) : undefined,
+      maxContacts: maxContacts ? parseInt(maxContacts) : undefined,
+      minEvidence: minEvidence ? parseInt(minEvidence) : undefined,
+      maxEvidence: maxEvidence ? parseInt(maxEvidence) : undefined,
+      minDrafts: minDrafts ? parseInt(minDrafts) : undefined,
+      maxDrafts: maxDrafts ? parseInt(maxDrafts) : undefined,
+    };
+    const hasCountFilters = Object.values(countFilters).some((v) => v !== undefined);
 
     // If all=true, return all businesses without pagination (for Select All)
     if (all) {
@@ -56,6 +87,18 @@ export async function GET(request: NextRequest) {
         select: {
           id: true,
           canonicalName: true,
+          industryGuess: true,
+          ...(includeContacts && {
+            contacts: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+              take: 3,
+            },
+          }),
           _count: {
             select: {
               contacts: true,
@@ -66,17 +109,8 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      // Apply count filters
       if (hasCountFilters) {
-        businesses = businesses.filter((b) => {
-          if (minContacts && b._count.contacts < parseInt(minContacts)) return false;
-          if (maxContacts && b._count.contacts > parseInt(maxContacts)) return false;
-          if (minEvidence && b._count.evidence < parseInt(minEvidence)) return false;
-          if (maxEvidence && b._count.evidence > parseInt(maxEvidence)) return false;
-          if (minDrafts && b._count.emailDrafts < parseInt(minDrafts)) return false;
-          if (maxDrafts && b._count.emailDrafts > parseInt(maxDrafts)) return false;
-          return true;
-        });
+        businesses = applyCountFilters(businesses, countFilters);
       }
 
       return NextResponse.json({
@@ -84,14 +118,62 @@ export async function GET(request: NextRequest) {
         pagination: {
           total: businesses.length,
         },
+      }, {
+        headers: {
+          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
+        },
       });
     }
 
-    // Fetch all matching businesses with counts for filtering
+    // OPTIMIZED: When no count filters, use direct pagination
+    if (!hasCountFilters) {
+      const [businesses, total] = await Promise.all([
+        prisma.business.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+          include: {
+            _count: {
+              select: {
+                contacts: true,
+                evidence: true,
+                emailDrafts: true,
+              },
+            },
+          },
+        }),
+        prisma.business.count({ where }),
+      ]);
+
+      return NextResponse.json({
+        businesses,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      }, {
+        headers: {
+          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
+        },
+      });
+    }
+
+    // When count filters are used, we need to fetch with counts and filter
+    // Use select instead of include to reduce payload size
     let allBusinesses = await prisma.business.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      include: {
+      select: {
+        id: true,
+        canonicalName: true,
+        website: true,
+        industryGuess: true,
+        location: true,
+        createdAt: true,
+        updatedAt: true,
         _count: {
           select: {
             contacts: true,
@@ -103,17 +185,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Apply count filters
-    if (hasCountFilters) {
-      allBusinesses = allBusinesses.filter((b) => {
-        if (minContacts && b._count.contacts < parseInt(minContacts)) return false;
-        if (maxContacts && b._count.contacts > parseInt(maxContacts)) return false;
-        if (minEvidence && b._count.evidence < parseInt(minEvidence)) return false;
-        if (maxEvidence && b._count.evidence > parseInt(maxEvidence)) return false;
-        if (minDrafts && b._count.emailDrafts < parseInt(minDrafts)) return false;
-        if (maxDrafts && b._count.emailDrafts > parseInt(maxDrafts)) return false;
-        return true;
-      });
-    }
+    allBusinesses = applyCountFilters(allBusinesses, countFilters);
 
     const total = allBusinesses.length;
     const businesses = allBusinesses.slice((page - 1) * limit, page * limit);
@@ -125,6 +197,10 @@ export async function GET(request: NextRequest) {
         limit,
         total,
         totalPages: Math.ceil(total / limit),
+      },
+    }, {
+      headers: {
+        'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
       },
     });
   } catch (error) {

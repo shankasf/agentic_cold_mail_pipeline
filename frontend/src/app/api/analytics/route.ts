@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { startOfDay, subDays, format } from 'date-fns';
+import { getCached, setCache, cacheKey, CACHE_TTL } from '@/lib/redis';
 
 // GET /api/analytics - Get dashboard analytics with AWS SES metrics
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const days = parseInt(searchParams.get('days') || '7');
+
+    // Check cache first
+    const cacheKeyStr = cacheKey.analytics(days.toString());
+    const cached = await getCached<Record<string, unknown>>(cacheKeyStr);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: {
+          'Cache-Control': 'private, max-age=60, stale-while-revalidate=300',
+          'X-Cache': 'HIT',
+        },
+      });
+    }
 
     const startDate = subDays(new Date(), days);
 
@@ -142,7 +155,7 @@ export async function GET(request: NextRequest) {
       where: { eventType: 'CLICK' },
     });
 
-    return NextResponse.json({
+    const responseData = {
       overview: {
         totalEmails: statusCounts.reduce((sum, item) => sum + item._count, 0),
         totalBusinesses,
@@ -196,6 +209,16 @@ export async function GET(request: NextRequest) {
           ...data,
         }))
         .reverse(),
+    };
+
+    // Cache the result
+    await setCache(cacheKeyStr, responseData, CACHE_TTL.ANALYTICS);
+
+    return NextResponse.json(responseData, {
+      headers: {
+        'Cache-Control': 'private, max-age=60, stale-while-revalidate=300',
+        'X-Cache': 'MISS',
+      },
     });
   } catch (error) {
     console.error('Error fetching analytics:', error);

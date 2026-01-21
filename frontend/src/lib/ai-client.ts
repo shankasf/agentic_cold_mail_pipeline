@@ -63,6 +63,28 @@ export interface RecheckComplianceResponse {
   footerText: string;
 }
 
+export interface GeneratedTemplate {
+  name: string;
+  subjectTemplate: string;
+  bodyTemplate: string;
+  description: string;
+}
+
+export interface GenerateTemplatesRequest {
+  purpose: string;
+  documentContent?: string;
+  contextHints?: {
+    industry?: string;
+    company_type?: string;
+    pain_points?: string[];
+  };
+}
+
+export interface GenerateTemplatesResponse {
+  template: GeneratedTemplate;
+  insights: string;
+}
+
 class AIClient {
   private baseUrl: string;
 
@@ -134,6 +156,37 @@ class AIClient {
     }
 
     return response.json();
+  }
+
+  async generateTemplates(request: GenerateTemplatesRequest): Promise<GenerateTemplatesResponse> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes
+
+    try {
+      const response = await fetch(`${this.baseUrl}/generate-templates`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || 'Failed to generate templates');
+      }
+
+      return response.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('Request timed out after 2 minutes');
+      }
+      throw error;
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Mail, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Clock, Send, XCircle, Terminal, RefreshCw } from 'lucide-react';
+import { Mail, CheckCircle, AlertCircle, ChevronDown, ChevronUp, Clock, Send, XCircle, Terminal, RefreshCw, Search, X } from 'lucide-react';
 import { format } from 'date-fns';
 
 interface EmailEvent {
@@ -18,6 +18,8 @@ interface EmailLog {
   bodyText: string;
   footerText: string;
   status: string;
+  fromName: string;
+  fromEmail: string;
   createdAt: string;
   updatedAt: string;
   contact: {
@@ -32,6 +34,11 @@ interface EmailLog {
   events: EmailEvent[];
 }
 
+interface Sender {
+  email: string;
+  name: string;
+}
+
 export default function EmailLogsPage() {
   const [emails, setEmails] = useState<EmailLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,19 +46,56 @@ export default function EmailLogsPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Filter states
+  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [status, setStatus] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sender, setSender] = useState('');
+  const [senders, setSenders] = useState<Sender[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
+
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/email-logs?page=${page}`);
+      const params = new URLSearchParams({ page: page.toString() });
+      if (search) params.set('search', search);
+      if (status) params.set('status', status);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      if (sender) params.set('sender', sender);
+
+      const res = await fetch(`/api/email-logs?${params.toString()}`);
       const data = await res.json();
       setEmails(data.emails || []);
+      setSenders(data.senders || []);
+      setIsAdmin(data.isAdmin || false);
       setTotalPages(data.pagination?.totalPages || 1);
     } catch (error) {
       console.error('Error fetching email logs:', error);
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, search, status, dateFrom, dateTo, sender]);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSearch(searchInput);
+    setPage(1);
+  };
+
+  const clearFilters = () => {
+    setSearch('');
+    setSearchInput('');
+    setStatus('');
+    setDateFrom('');
+    setDateTo('');
+    setSender('');
+    setPage(1);
+  };
+
+  const hasActiveFilters = search || status || dateFrom || dateTo || sender;
 
   useEffect(() => {
     fetchLogs();
@@ -120,11 +164,130 @@ export default function EmailLogsPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Email Logs</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Activity</h1>
         <button onClick={fetchLogs} className="btn-secondary flex items-center gap-2">
           <RefreshCw className="w-4 h-4" />
           Refresh
         </button>
+      </div>
+
+      {/* Search and Filters Bar */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4 shadow-sm">
+        <div className="flex flex-col lg:flex-row gap-4">
+          {/* Search Input */}
+          <form onSubmit={handleSearch} className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search by email, subject, or company..."
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              />
+            </div>
+          </form>
+
+          {/* Filter Controls */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Status Filter */}
+            <select
+              value={status}
+              onChange={(e) => { setStatus(e.target.value); setPage(1); }}
+              className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors min-w-[140px]"
+            >
+              <option value="">All Statuses</option>
+              <option value="SENT">Sent</option>
+              <option value="BOUNCED">Bounced</option>
+              <option value="COMPLAINT">Complaint</option>
+            </select>
+
+            {/* Sender Filter (Admin only) */}
+            {isAdmin && senders.length > 0 && (
+              <select
+                value={sender}
+                onChange={(e) => { setSender(e.target.value); setPage(1); }}
+                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors min-w-[160px]"
+              >
+                <option value="">All Senders</option>
+                {senders.map((s) => (
+                  <option key={s.email} value={s.email}>
+                    {s.name || s.email}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Date Range */}
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                title="From date"
+              />
+              <span className="text-gray-400">—</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                className="px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                title="To date"
+              />
+            </div>
+
+            {/* Clear Button */}
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                className="px-3 py-2.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1"
+              >
+                <X className="w-4 h-4" />
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Active Filters Summary */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+            <span className="text-xs text-gray-500 uppercase tracking-wide">Active:</span>
+            {search && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                &ldquo;{search}&rdquo;
+                <button onClick={() => { setSearch(''); setSearchInput(''); }} className="hover:text-blue-900">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {status && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                {status.charAt(0) + status.slice(1).toLowerCase()}
+                <button onClick={() => setStatus('')} className="hover:text-blue-900">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {sender && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                {senders.find(s => s.email === sender)?.name || sender}
+                <button onClick={() => setSender('')} className="hover:text-blue-900">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {(dateFrom || dateTo) && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 text-xs font-medium rounded-full border border-blue-200">
+                {dateFrom || '...'} → {dateTo || '...'}
+                <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="hover:text-blue-900">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="card">
@@ -135,8 +298,19 @@ export default function EmailLogsPage() {
         {emails.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
             <Mail className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-            <p>No sent emails yet.</p>
-            <p className="text-sm mt-1">Emails will appear here after they are sent.</p>
+            {hasActiveFilters ? (
+              <>
+                <p>No emails match your filters.</p>
+                <button onClick={clearFilters} className="text-sm mt-2 text-blue-600 hover:text-blue-700">
+                  Clear filters
+                </button>
+              </>
+            ) : (
+              <>
+                <p>No sent emails yet.</p>
+                <p className="text-sm mt-1">Emails will appear here after they are sent.</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
