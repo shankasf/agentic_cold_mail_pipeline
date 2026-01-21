@@ -194,48 +194,89 @@ A production-ready admin dashboard for generating personalized cold emails using
 
 ## Features
 
-- **Multi-Agent AI Pipeline**: 5 specialized agents using OpenAI Agents SDK
-  - Entity Resolver: Extracts businesses, contacts, and evidence from data
-  - Business Analyzer: Analyzes businesses and selects personalization facts
-  - Email Writer: Generates 70-110 word cold emails
-  - Compliance Checker: Validates deliverability and spam compliance
-  - Gatekeeper: Makes final approval decisions
+### Multi-Agent AI Pipeline
+7 specialized agents using OpenAI Agents SDK:
+- **Entity Resolver**: Extracts businesses, contacts, and evidence from data
+- **Business Analyzer**: Analyzes businesses and selects personalization facts
+- **Email Writer**: Generates 70-110 word cold emails
+- **Compliance Checker**: Validates deliverability and spam compliance
+- **Gatekeeper**: Makes final approval decisions
+- **Column Mapper**: AI-powered CSV/Excel column detection and mapping
+- **Template Generator**: Generates email templates from uploaded documents
 
-- **File Ingestion**: Supports TXT, CSV, XLSX, and PDF files
+### Two Email Pipelines
+1. **Agentic Pipeline**: Full multi-agent generation with personalization
+2. **Template Pipeline**: Fast bulk emails using predefined templates with variable substitution
+
+### Performance Optimizations
+- **Database Indexes**: 20+ indexes for fast queries on businesses, contacts, emails, and events
+- **Redis Caching**: Analytics cached for 5 minutes (90% DB load reduction)
+- **SWR Data Fetching**: Request deduplication and stale-while-revalidate pattern
+- **HTTP Cache Headers**: Browser-level caching on all major endpoints
+
+### Core Features
+- **File Ingestion**: Supports TXT, CSV, XLSX, JSON, TSV, and PDF files
+- **Smart Column Mapping**: AI detects and maps columns automatically (with fallback to synonyms)
 - **Evidence-First Design**: All personalization is traceable to source data
 - **Admin Dashboard**: Upload files, review emails, approve, export, and send
+- **Email Threading**: Track conversations and follow-up emails
 - **AWS SES Integration**: SMTP-based email sending with bounce/complaint handling
 - **Background Workers**: BullMQ-powered job processing
+- **Role-Based Access**: Admin and Sales Rep roles with appropriate permissions
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14 (App Router), React, TypeScript, Tailwind CSS
-- **Backend**: Next.js API Routes + Python FastAPI (AI Service)
-- **Database**: PostgreSQL with Prisma ORM
-- **Queue**: BullMQ + Redis
-- **AI**: OpenAI Agents SDK (Python)
-- **Email**: AWS SES SMTP
+| Layer | Technology |
+|-------|------------|
+| **Frontend** | Next.js 14, React 18, TypeScript 5, Tailwind CSS |
+| **Data Fetching** | SWR (stale-while-revalidate) |
+| **Backend** | Next.js API Routes + Python FastAPI |
+| **Database** | PostgreSQL with Prisma ORM (20+ indexes) |
+| **Caching** | Redis (analytics, session, pub/sub) |
+| **Queue** | BullMQ + Redis |
+| **AI** | OpenAI Agents SDK (Python) |
+| **Email** | AWS SES SMTP |
+| **Auth** | JWT (jose) + bcrypt |
+| **Testing** | Vitest + Testing Library |
+| **Infrastructure** | Kubernetes (K3s), Traefik Ingress |
 
 ## Project Structure
 
 ```
 email_marketing/
-├── .env                    # Environment variables (single file)
-├── .gitignore
-├── README.md
-├── frontend/               # Next.js application
+├── .env                      # Environment variables
+├── .github/                  # CI/CD workflows
+├── frontend/                 # Next.js application
 │   ├── package.json
 │   ├── prisma/
-│   │   └── schema.prisma   # Database schema
+│   │   ├── schema.prisma     # Database schema with indexes
+│   │   └── migrations/       # Database migrations
 │   └── src/
-│       ├── app/            # Next.js app router pages
-│       ├── components/     # React components
-│       └── lib/            # Utilities, parsers, queue
-└── ai-service/             # Python AI service
+│       ├── app/
+│       │   ├── api/          # API routes
+│       │   ├── dashboard/    # Dashboard pages
+│       │   └── login/        # Auth pages
+│       ├── components/       # React components
+│       └── lib/
+│           ├── prisma.ts     # Database client
+│           ├── redis.ts      # Redis + caching utilities
+│           ├── swr.ts        # SWR hooks for data fetching
+│           ├── queue.ts      # BullMQ job queues
+│           └── worker.ts     # Background worker
+└── ai-service/               # Python AI service
     ├── requirements.txt
-    ├── main.py             # FastAPI server
-    ├── pipeline.py         # Multi-agent orchestration
-    └── agents/             # OpenAI Agents SDK agents
+    ├── main.py               # FastAPI server
+    ├── pipeline.py           # Multi-agent orchestration
+    ├── config.py             # Configuration management
+    ├── schemas.py            # Pydantic models
+    └── email_agents/         # AI Agents
+        ├── entity_resolver.py
+        ├── business_analyzer.py
+        ├── email_writer.py
+        ├── compliance_checker.py
+        ├── gatekeeper.py
+        ├── column_mapper.py      # CSV column mapping
+        └── template_generator.py # Template generation
 ```
 
 ## Quick Start
@@ -375,6 +416,8 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 | `/config` | GET | Get AI service config |
 | `/generate` | POST | Run multi-agent pipeline |
 | `/recheck-compliance` | POST | Recheck email compliance |
+| `/map-columns` | POST | AI-powered CSV column mapping |
+| `/generate-templates` | POST | Generate email templates from documents |
 
 ## Email Generation Rules
 
@@ -393,14 +436,52 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 
 ## Production Deployment
 
+### Kubernetes (K3s)
+
+The application is deployed on Kubernetes with the following components:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    email-marketing namespace                 │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
+│  │  frontend   │  │ ai-service  │  │   worker    │         │
+│  │  (Next.js)  │  │  (FastAPI)  │  │  (BullMQ)   │         │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────┘         │
+│         │                │                                   │
+│         └────────┬───────┘                                   │
+│                  ▼                                           │
+│  ┌─────────────────────────────────────────────────┐       │
+│  │              Traefik Ingress                     │       │
+│  │         marketing.callsphere.tech                │       │
+│  └─────────────────────────────────────────────────┘       │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐                          │
+│  │  PostgreSQL │  │    Redis    │                          │
+│  └─────────────┘  └─────────────┘                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Environment Variables
 
-Ensure all production values are set in `.env`:
+Ensure all production values are set:
 
-- `DATABASE_URL`: Production PostgreSQL connection string
-- `REDIS_URL`: Production Redis URL
-- `OPENAI_API_KEY`: Production API key
-- `SMTP_*`: AWS SES production credentials
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection (with `?connection_limit=20`) |
+| `REDIS_URL` | Redis URL for caching and queues |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `SMTP_HOST` | AWS SES SMTP endpoint |
+| `SMTP_USER` | SES SMTP username |
+| `SMTP_PASS` | SES SMTP password |
+| `JWT_SECRET` | Secret for JWT token signing |
+
+### Database Connection Pooling
+
+Configure connection pooling in `DATABASE_URL`:
+```
+postgresql://user:pass@host:5432/db?connection_limit=20&pool_timeout=10
+```
 
 ### Build
 
@@ -409,10 +490,6 @@ cd frontend
 npm run build
 npm start
 ```
-
-### Docker (Optional)
-
-Create a `docker-compose.yml` for containerized deployment.
 
 ## Testing
 
@@ -439,4 +516,4 @@ Proprietary - CallSphere
 
 ---
 
-Built with OpenAI Agents SDK and Next.js
+Built with OpenAI Agents SDK, Next.js 14, and FastAPI | Deployed on Kubernetes (K3s)
