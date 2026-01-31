@@ -1,18 +1,27 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
+
+interface ContactCountRequest {
+  businessIds: string[];
+}
 
 // POST /api/businesses/contact-count - Get contact count for selected businesses
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<ContactCountRequest>(request, logger);
     const { businessIds } = body;
 
     if (!businessIds || !Array.isArray(businessIds) || businessIds.length === 0) {
-      return NextResponse.json(
-        { error: 'Business IDs are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Business IDs are required', 'businessIds');
     }
+
+    logger.debug('Counting contacts for businesses', { businessCount: businessIds.length });
 
     // Get suppression list
     const suppressedEmails = await prisma.suppressionList.findMany({
@@ -35,16 +44,17 @@ export async function POST(request: NextRequest) {
       c => !suppressedSet.has(c.email.toLowerCase())
     );
 
-    return NextResponse.json({
+    logger.info('Contact count completed', {
       businessCount: businessIds.length,
       contactCount: activeContacts.length,
       suppressedCount: contacts.length - activeContacts.length,
     });
-  } catch (error) {
-    console.error('Error counting contacts:', error);
-    return NextResponse.json(
-      { error: 'Failed to count contacts' },
-      { status: 500 }
-    );
-  }
-}
+
+    return jsonResponse({
+      businessCount: businessIds.length,
+      contactCount: activeContacts.length,
+      suppressedCount: contacts.length - activeContacts.length,
+    });
+  },
+  { requireAuth: true }
+);

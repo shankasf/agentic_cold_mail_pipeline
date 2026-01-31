@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import storage from '@/lib/storage';
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
+import { createApiHandler, jsonResponse, Errors } from '@/lib/api-utils';
 
 // Supported file types for template uploads
 const SUPPORTED_EXTENSIONS = ['txt', 'pdf', 'docx'];
@@ -29,8 +30,10 @@ async function extractContent(buffer: Buffer, filename: string): Promise<string>
 }
 
 // GET /api/template-uploads - List all template file uploads
-export async function GET() {
-  try {
+export const GET = createApiHandler(
+  async (request, { logger }) => {
+    logger.debug('Fetching template uploads');
+
     const uploads = await prisma.templateFileUpload.findMany({
       orderBy: { uploadedAt: 'desc' },
       include: {
@@ -40,37 +43,29 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(uploads);
-  } catch (error) {
-    console.error('Error fetching template uploads:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch template uploads' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template uploads fetched', { count: uploads.length });
+    return jsonResponse(uploads);
+  },
+  { requireAuth: true }
+);
 
 // POST /api/template-uploads - Upload a template file (txt, pdf, docx)
-export async function POST(request: NextRequest) {
-  try {
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
 
     if (!file) {
-      return NextResponse.json(
-        { error: 'No file provided' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('No file provided');
     }
 
     // Check file extension
     const fileType = file.name.split('.').pop()?.toLowerCase() || '';
     if (!SUPPORTED_EXTENSIONS.includes(fileType)) {
-      return NextResponse.json(
-        { error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}` },
-        { status: 400 }
-      );
+      throw Errors.badRequest(`Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}`);
     }
+
+    logger.debug('Processing template file upload', { filename: file.name, fileType });
 
     // Read file content
     const buffer = Buffer.from(await file.arrayBuffer());
@@ -93,6 +88,7 @@ export async function POST(request: NextRequest) {
       status = 'FAILED';
       errorText = parseError instanceof Error ? parseError.message : 'Failed to parse file';
       content = '';
+      logger.debug('Failed to parse file content', { error: errorText });
     }
 
     // Save file to storage
@@ -111,12 +107,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(upload, { status: 201 });
-  } catch (error) {
-    console.error('Error uploading template file:', error);
-    return NextResponse.json(
-      { error: 'Failed to upload file' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template file uploaded', { uploadId: upload.id, status });
+    return jsonResponse(upload, { status: 201 });
+  },
+  { requireAuth: true }
+);

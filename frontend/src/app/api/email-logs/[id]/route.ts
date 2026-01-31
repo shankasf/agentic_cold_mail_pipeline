@@ -1,13 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  Errors,
+} from '@/lib/api-utils';
 
 // GET /api/email-logs/[id] - Get logs for a specific email
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Fetching email logs', { emailId: id });
 
     const email = await prisma.emailDraft.findUnique({
       where: { id },
@@ -21,18 +25,12 @@ export async function GET(
     });
 
     if (!email) {
-      return NextResponse.json(
-        { error: 'Email not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Email');
     }
 
-    return NextResponse.json({ email });
-  } catch (error) {
-    console.error('Error fetching email logs:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch email logs' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Email logs fetched successfully', { emailId: id });
+
+    return jsonResponse({ email });
+  },
+  { requireAuth: true }
+);

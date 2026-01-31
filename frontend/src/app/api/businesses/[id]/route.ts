@@ -1,21 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
 // GET /api/businesses/[id] - Get business details
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Fetching business', { businessId: id });
 
     const business = await prisma.business.findUnique({
       where: { id },
       include: {
-        contacts: true,
+        contacts: {
+          take: 50,
+          orderBy: { createdAt: 'desc' },
+        },
         evidence: {
+          take: 20,
+          orderBy: { createdAt: 'desc' },
           include: {
-            chunk: true,
+            chunk: {
+              select: {
+                id: true,
+                textContent: true,
+              },
+            },
             upload: {
               select: {
                 id: true,
@@ -25,44 +35,66 @@ export async function GET(
           },
         },
         emailDrafts: {
-          include: {
-            contact: true,
-          },
+          take: 20,
           orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            subject: true,
+            status: true,
+            createdAt: true,
+            contact: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+              },
+            },
+          },
         },
         observations: {
-          include: {
-            chunk: true,
+          take: 20,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            industry: true,
+            observation: true,
+            confidence: true,
+          },
+        },
+        _count: {
+          select: {
+            contacts: true,
+            evidence: true,
+            emailDrafts: true,
+            observations: true,
           },
         },
       },
     });
 
     if (!business) {
-      return NextResponse.json(
-        { error: 'Business not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Business');
     }
 
-    return NextResponse.json(business);
-  } catch (error) {
-    console.error('Error fetching business:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch business' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Business fetched', { businessId: id });
+
+    return jsonResponse(business);
+  },
+  { requireAuth: true }
+);
 
 // PATCH /api/businesses/[id] - Update business
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
+export const PATCH = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+    const body = await parseJsonBody<{
+      canonicalName?: string;
+      website?: string;
+      industryGuess?: string;
+      location?: string;
+    }>(request, logger);
+
+    logger.debug('Updating business', { businessId: id });
 
     const updated = await prisma.business.update({
       where: { id },
@@ -74,34 +106,27 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error('Error updating business:', error);
-    return NextResponse.json(
-      { error: 'Failed to update business' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Business updated', { businessId: id });
+
+    return jsonResponse(updated);
+  },
+  { requireAuth: true }
+);
 
 // DELETE /api/businesses/[id] - Delete business
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Deleting business', { businessId: id });
 
     await prisma.business.delete({
       where: { id },
     });
 
-    return NextResponse.json({ message: 'Business deleted' });
-  } catch (error) {
-    console.error('Error deleting business:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete business' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Business deleted', { businessId: id });
+
+    return jsonResponse({ message: 'Business deleted' });
+  },
+  { requireAuth: true }
+);

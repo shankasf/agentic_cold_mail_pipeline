@@ -1,14 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { extractVariables, DEFAULT_TEMPLATES, TEMPLATE_CATEGORIES } from '@/lib/template-engine';
 import { TemplateCategory } from '@prisma/client';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
 
 // GET /api/templates - List all templates
-export async function GET(request: NextRequest) {
-  try {
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category');
     const activeOnly = searchParams.get('active') !== 'false';
+
+    logger.debug('Fetching templates', { category, activeOnly });
 
     const where: { category?: TemplateCategory; isActive?: boolean } = {};
 
@@ -30,53 +38,48 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(templates, {
-      headers: {
-        'Cache-Control': 'private, max-age=60, stale-while-revalidate=300',
-      },
+    logger.info('Templates fetched successfully', { count: templates.length });
+
+    return jsonResponse(templates, {
+      cache: 'private, max-age=60, stale-while-revalidate=300',
     });
-  } catch (error) {
-    console.error('Error fetching templates:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch templates' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);
 
 // POST /api/templates - Create a new template
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{
+      category?: string;
+      name?: string;
+      description?: string;
+      subjectTemplate?: string;
+      bodyTemplate?: string;
+      isActive?: boolean;
+    }>(request, logger);
 
     // Validation
-    if (!body.category || !TEMPLATE_CATEGORIES.includes(body.category)) {
-      return NextResponse.json(
-        { error: `Invalid category. Must be one of: ${TEMPLATE_CATEGORIES.join(', ')}` },
-        { status: 400 }
+    if (!body.category || !TEMPLATE_CATEGORIES.includes(body.category as typeof TEMPLATE_CATEGORIES[number])) {
+      throw Errors.badRequest(
+        `Invalid category. Must be one of: ${TEMPLATE_CATEGORIES.join(', ')}`,
+        'category'
       );
     }
 
     if (!body.name || body.name.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Template name is required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Template name is required', 'name');
     }
 
     if (!body.subjectTemplate || body.subjectTemplate.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Subject template is required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Subject template is required', 'subjectTemplate');
     }
 
     if (!body.bodyTemplate || body.bodyTemplate.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Body template is required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Body template is required', 'bodyTemplate');
     }
+
+    logger.debug('Creating template', { name: body.name, category: body.category });
 
     // Extract variables from templates
     const subjectVars = extractVariables(body.subjectTemplate);
@@ -95,19 +98,18 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(template, { status: 201 });
-  } catch (error) {
-    console.error('Error creating template:', error);
-    return NextResponse.json(
-      { error: 'Failed to create template' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template created successfully', { templateId: template.id, name: template.name });
+
+    return jsonResponse(template, { status: 201 });
+  },
+  { requireAdmin: true }
+);
 
 // PUT /api/templates - Seed default templates (admin action)
-export async function PUT() {
-  try {
+export const PUT = createApiHandler(
+  async (_request, { logger }) => {
+    logger.debug('Seeding default templates');
+
     const created = [];
 
     for (const category of TEMPLATE_CATEGORIES) {
@@ -134,15 +136,12 @@ export async function PUT() {
       }
     }
 
-    return NextResponse.json({
+    logger.info('Default templates seeded', { createdCount: created.length });
+
+    return jsonResponse({
       message: `Created ${created.length} default templates`,
       templates: created,
     });
-  } catch (error) {
-    console.error('Error seeding templates:', error);
-    return NextResponse.json(
-      { error: 'Failed to seed templates' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAdmin: true }
+);

@@ -1,19 +1,13 @@
-import { NextResponse } from 'next/server';
 import { clearAuthCookie } from '@/lib/auth';
+import { createApiHandler, jsonResponse } from '@/lib/api-utils';
 
-export async function POST() {
-  try {
-    await clearAuthCookie();
+export const POST = createApiHandler(async (_request, { logger }) => {
+  await clearAuthCookie();
 
-    return NextResponse.json({
-      success: true,
-      message: 'Logged out successfully',
-    });
-  } catch (error) {
-    console.error('Logout error:', error);
-    return NextResponse.json(
-      { error: 'Logout failed' },
-      { status: 500 }
-    );
-  }
-}
+  logger.info('User logged out');
+
+  return jsonResponse({
+    success: true,
+    message: 'Logged out successfully',
+  });
+});

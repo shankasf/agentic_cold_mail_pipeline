@@ -1,15 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { extractVariables, previewTemplate, TEMPLATE_CATEGORIES } from '@/lib/template-engine';
 import { TemplateCategory } from '@prisma/client';
+import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
 // GET /api/templates/[id] - Get single template with preview
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Fetching template', { templateId: id });
 
     const template = await prisma.emailTemplate.findUnique({
       where: { id },
@@ -25,10 +25,7 @@ export async function GET(
     });
 
     if (!template) {
-      return NextResponse.json(
-        { error: 'Template not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Template');
     }
 
     // Generate preview
@@ -41,37 +38,37 @@ export async function GET(
       variables: (template.variables as string[] | null) || [],
     });
 
-    return NextResponse.json({
+    logger.info('Template fetched', { templateId: id });
+
+    return jsonResponse({
       ...template,
       preview,
     });
-  } catch (error) {
-    console.error('Error fetching template:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch template' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);
 
 // PATCH /api/templates/[id] - Update template
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
+export const PATCH = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+    const body = await parseJsonBody<{
+      name?: string;
+      description?: string | null;
+      subjectTemplate?: string;
+      bodyTemplate?: string;
+      isActive?: boolean;
+      category?: string;
+    }>(request, logger);
+
+    logger.debug('Updating template', { templateId: id });
 
     const existing = await prisma.emailTemplate.findUnique({
       where: { id },
     });
 
     if (!existing) {
-      return NextResponse.json(
-        { error: 'Template not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Template');
     }
 
     // Build update data
@@ -87,7 +84,7 @@ export async function PATCH(
 
     if (body.name !== undefined) {
       if (body.name.trim().length === 0) {
-        return NextResponse.json({ error: 'Name cannot be empty' }, { status: 400 });
+        throw Errors.validation('Name cannot be empty', 'name');
       }
       updateData.name = body.name.trim();
     }
@@ -98,14 +95,14 @@ export async function PATCH(
 
     if (body.subjectTemplate !== undefined) {
       if (body.subjectTemplate.trim().length === 0) {
-        return NextResponse.json({ error: 'Subject template cannot be empty' }, { status: 400 });
+        throw Errors.validation('Subject template cannot be empty', 'subjectTemplate');
       }
       updateData.subjectTemplate = body.subjectTemplate.trim();
     }
 
     if (body.bodyTemplate !== undefined) {
       if (body.bodyTemplate.trim().length === 0) {
-        return NextResponse.json({ error: 'Body template cannot be empty' }, { status: 400 });
+        throw Errors.validation('Body template cannot be empty', 'bodyTemplate');
       }
       updateData.bodyTemplate = body.bodyTemplate.trim();
     }
@@ -115,11 +112,8 @@ export async function PATCH(
     }
 
     if (body.category !== undefined) {
-      if (!TEMPLATE_CATEGORIES.includes(body.category)) {
-        return NextResponse.json(
-          { error: `Invalid category. Must be one of: ${TEMPLATE_CATEGORIES.join(', ')}` },
-          { status: 400 }
-        );
+      if (!TEMPLATE_CATEGORIES.includes(body.category as typeof TEMPLATE_CATEGORIES[number])) {
+        throw Errors.validation(`Invalid category. Must be one of: ${TEMPLATE_CATEGORIES.join(', ')}`, 'category');
       }
       updateData.category = body.category as TemplateCategory;
     }
@@ -138,56 +132,45 @@ export async function PATCH(
       data: updateData,
     });
 
-    return NextResponse.json(template);
-  } catch (error) {
-    console.error('Error updating template:', error);
-    return NextResponse.json(
-      { error: 'Failed to update template' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template updated', { templateId: id });
+
+    return jsonResponse(template);
+  },
+  { requireAuth: true }
+);
 
 // DELETE /api/templates/[id] - Delete template
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Deleting template', { templateId: id });
 
     const template = await prisma.emailTemplate.findUnique({
       where: { id },
-      include: {
-        _count: { select: { uploads: true } },
-      },
     });
 
     if (!template) {
-      return NextResponse.json(
-        { error: 'Template not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Template');
     }
 
-    // Warn if template has uploads
-    if (template._count.uploads > 0) {
-      return NextResponse.json(
-        { error: `Cannot delete template with ${template._count.uploads} uploads. Deactivate it instead.` },
-        { status: 400 }
-      );
-    }
+    // Use transaction to handle all related records
+    await prisma.$transaction(async (tx) => {
+      // Clear createdTemplateId references in TemplateFileUpload
+      await tx.templateFileUpload.updateMany({
+        where: { createdTemplateId: id },
+        data: { createdTemplateId: null },
+      });
 
-    await prisma.emailTemplate.delete({
-      where: { id },
+      // Delete the template (TemplateUpload cascade delete will handle uploads)
+      await tx.emailTemplate.delete({
+        where: { id },
+      });
     });
 
-    return NextResponse.json({ message: 'Template deleted' });
-  } catch (error) {
-    console.error('Error deleting template:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete template' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template deleted', { templateId: id });
+
+    return jsonResponse({ message: 'Template deleted' });
+  },
+  { requireAuth: true }
+);

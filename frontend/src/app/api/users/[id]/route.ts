@@ -1,24 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getCurrentUser, hashPassword, validatePassword, isAdmin } from '@/lib/auth';
+import { hashPassword, validatePassword } from '@/lib/auth';
 import { UserRole } from '@prisma/client';
+import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
 // GET - Get single user (Admin only)
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
 
-    // Check if user is admin
-    const isUserAdmin = await isAdmin();
-    if (!isUserAdmin) {
-      return NextResponse.json(
-        { error: 'Unauthorized - Admin access required' },
-        { status: 403 }
-      );
-    }
+    logger.debug('Fetching user', { userId: id });
 
     const user = await prisma.user.findUnique({
       where: { id },
@@ -35,38 +26,29 @@ export async function GET(
     });
 
     if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('User');
     }
 
-    return NextResponse.json({ user });
-  } catch (error) {
-    console.error('Error fetching user:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch user' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('User fetched', { userId: id });
+
+    return jsonResponse({ user });
+  },
+  { requireAdmin: true }
+);
 
 // PATCH - Update user (Admin only)
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const PATCH = createApiHandler(
+  async (request: NextRequest, { logger, user: currentUser, params }) => {
+    const { id } = params;
+    const body = await parseJsonBody<{
+      email?: string;
+      password?: string;
+      name?: string;
+      role?: UserRole;
+      isActive?: boolean;
+    }>(request, logger);
 
-    // Check if user is admin
-    const currentUser = await getCurrentUser();
-    if (!currentUser || currentUser.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized - Admin access required' },
-        { status: 403 }
-      );
-    }
+    logger.debug('Updating user', { userId: id });
 
     // Check if target user exists
     const targetUser = await prisma.user.findUnique({
@@ -74,29 +56,19 @@ export async function PATCH(
     });
 
     if (!targetUser) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('User');
     }
 
-    const body = await request.json();
     const { email, password, name, role, isActive } = body;
 
     // Prevent admin from demoting themselves
     if (id === currentUser.id && role && role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Cannot demote yourself from admin role' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Cannot demote yourself from admin role');
     }
 
     // Prevent admin from deactivating themselves
     if (id === currentUser.id && isActive === false) {
-      return NextResponse.json(
-        { error: 'Cannot deactivate your own account' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Cannot deactivate your own account');
     }
 
     // Build update data
@@ -112,10 +84,7 @@ export async function PATCH(
     if (email !== undefined) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        return NextResponse.json(
-          { error: 'Invalid email format' },
-          { status: 400 }
-        );
+        throw Errors.validation('Invalid email format', 'email');
       }
 
       // Check if email is already used by another user
@@ -127,10 +96,7 @@ export async function PATCH(
       });
 
       if (existingUser) {
-        return NextResponse.json(
-          { error: 'Email already in use by another user' },
-          { status: 409 }
-        );
+        throw Errors.conflict('Email already in use by another user', 'email');
       }
 
       updateData.email = email.toLowerCase();
@@ -140,10 +106,7 @@ export async function PATCH(
     if (password) {
       const passwordValidation = validatePassword(password);
       if (!passwordValidation.valid) {
-        return NextResponse.json(
-          { error: passwordValidation.error },
-          { status: 400 }
-        );
+        throw Errors.validation(passwordValidation.error || 'Invalid password', 'password');
       }
       updateData.passwordHash = await hashPassword(password);
     }
@@ -157,10 +120,7 @@ export async function PATCH(
     if (role !== undefined) {
       const validRoles: UserRole[] = ['ADMIN', 'SALES_REP'];
       if (!validRoles.includes(role)) {
-        return NextResponse.json(
-          { error: 'Invalid role' },
-          { status: 400 }
-        );
+        throw Errors.validation('Invalid role', 'role');
       }
       updateData.role = role;
     }
@@ -186,42 +146,26 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({
+    logger.info('User updated', { userId: id });
+
+    return jsonResponse({
       user: updatedUser,
       message: 'User updated successfully',
     });
-  } catch (error) {
-    console.error('Error updating user:', error);
-    return NextResponse.json(
-      { error: 'Failed to update user' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAdmin: true }
+);
 
 // DELETE - Delete user (Admin only)
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger, user: currentUser, params }) => {
+    const { id } = params;
 
-    // Check if user is admin
-    const currentUser = await getCurrentUser();
-    if (!currentUser || currentUser.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Unauthorized - Admin access required' },
-        { status: 403 }
-      );
-    }
+    logger.debug('Deleting user', { userId: id });
 
     // Prevent admin from deleting themselves
     if (id === currentUser.id) {
-      return NextResponse.json(
-        { error: 'Cannot delete your own account' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Cannot delete your own account');
     }
 
     // Check if target user exists
@@ -230,10 +174,7 @@ export async function DELETE(
     });
 
     if (!targetUser) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('User');
     }
 
     // Delete user
@@ -241,14 +182,11 @@ export async function DELETE(
       where: { id },
     });
 
-    return NextResponse.json({
+    logger.info('User deleted', { userId: id });
+
+    return jsonResponse({
       message: 'User deleted successfully',
     });
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete user' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAdmin: true }
+);

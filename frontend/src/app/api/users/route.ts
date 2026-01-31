@@ -1,19 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getCurrentUser, hashPassword, validatePassword, isAdmin } from '@/lib/auth';
+import { hashPassword, validatePassword, getCurrentUser } from '@/lib/auth';
 import { UserRole } from '@prisma/client';
+import { sendNotificationEmail } from '@/lib/email-sender';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
 
 // GET - List all users (Admin only)
-export async function GET() {
-  try {
-    // Check if user is admin
-    const isUserAdmin = await isAdmin();
-    if (!isUserAdmin) {
-      return NextResponse.json(
-        { error: 'Unauthorized - Admin access required' },
-        { status: 403 }
-      );
-    }
+export const GET = createApiHandler(
+  async (_request, { logger }) => {
+    logger.debug('Fetching all users');
 
     const users = await prisma.user.findMany({
       select: {
@@ -29,55 +28,39 @@ export async function GET() {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json({ users });
-  } catch (error) {
-    console.error('Error fetching users:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch users' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Users fetched successfully', { count: users.length });
+    return jsonResponse({ users });
+  },
+  { requireAdmin: true }
+);
 
 // POST - Create new user (Admin only)
-export async function POST(request: NextRequest) {
-  try {
-    // Check if user is admin
-    const isUserAdmin = await isAdmin();
-    if (!isUserAdmin) {
-      return NextResponse.json(
-        { error: 'Unauthorized - Admin access required' },
-        { status: 403 }
-      );
-    }
+export const POST = createApiHandler(
+  async (request, { logger, user: adminUser }) => {
+    const body = await parseJsonBody<{
+      email?: string;
+      password?: string;
+      name?: string;
+      role?: UserRole;
+    }>(request, logger);
 
-    const body = await request.json();
     const { email, password, name, role } = body;
 
     // Validate required fields
     if (!email || !password) {
-      return NextResponse.json(
-        { error: 'Email and password are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Email and password are required');
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      return NextResponse.json(
-        { error: 'Invalid email format' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Invalid email format', 'email');
     }
 
     // Validate password
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.valid) {
-      return NextResponse.json(
-        { error: passwordValidation.error },
-        { status: 400 }
-      );
+      throw Errors.badRequest(passwordValidation.error || 'Invalid password', 'password');
     }
 
     // Validate role
@@ -90,14 +73,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (existingUser) {
-      return NextResponse.json(
-        { error: 'Email already exists' },
-        { status: 409 }
-      );
+      throw Errors.conflict('Email already exists', 'email');
     }
 
     // Hash password
     const passwordHash = await hashPassword(password);
+
+    logger.debug('Creating new user', { email: email.toLowerCase(), role: userRole });
 
     // Create user
     const newUser = await prisma.user.create({
@@ -117,15 +99,64 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(
-      { user: newUser, message: 'User created successfully' },
+    // Get admin who created the user
+    const currentUser = await getCurrentUser();
+    const adminEmail = currentUser?.email || 'admin@callsphere.tech';
+    const adminName = currentUser?.name || 'Admin';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://marketing.callsphere.tech';
+
+    // Send welcome email to new user
+    const userEmailBody = `Hi ${name || 'there'},
+
+Welcome to CallSphere! Your account has been created successfully.
+
+Here are your login details:
+- Email: ${email.toLowerCase()}
+- Password: ${password}
+
+You can login at: ${appUrl}/login
+
+Please change your password after your first login for security.
+
+If you have any questions, please contact your administrator.
+
+Best regards,
+The CallSphere Team`;
+
+    await sendNotificationEmail({
+      to: email.toLowerCase(),
+      subject: 'Welcome to CallSphere - Your Account is Ready',
+      bodyText: userEmailBody,
+    });
+
+    // Send notification email to admin
+    const adminEmailBody = `Hi ${adminName},
+
+A new user has been added to CallSphere.
+
+New User Details:
+- Name: ${name || 'Not provided'}
+- Email: ${email.toLowerCase()}
+- Role: ${userRole}
+- Created: ${new Date().toLocaleString()}
+
+The user has been sent a welcome email with their login credentials.
+
+Best regards,
+CallSphere System`;
+
+    await sendNotificationEmail({
+      to: adminEmail,
+      subject: `New User Created: ${name || email}`,
+      bodyText: adminEmailBody,
+    });
+
+    logger.info('User created successfully', { userId: newUser.id, createdBy: adminUser.id });
+
+    return jsonResponse(
+      { user: newUser, message: 'User created successfully. Confirmation emails sent.' },
       { status: 201 }
     );
-  } catch (error) {
-    console.error('Error creating user:', error);
-    return NextResponse.json(
-      { error: 'Failed to create user' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAdmin: true }
+);

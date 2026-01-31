@@ -1,39 +1,46 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
 // POST /api/emails/delete - Delete emails by IDs
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{ emailIds: string[] }>(request, logger);
     const { emailIds } = body;
 
     if (!emailIds || !Array.isArray(emailIds) || emailIds.length === 0) {
-      return NextResponse.json(
-        { error: 'Email IDs are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Email IDs are required');
     }
 
-    // Delete email events first (due to foreign key constraint)
-    await prisma.emailEvent.deleteMany({
-      where: { emailDraftId: { in: emailIds } },
+    logger.debug('Deleting emails', { count: emailIds.length });
+
+    // Use a transaction to handle all related records
+    const result = await prisma.$transaction(async (tx) => {
+      // Clear originalEmailId references in InboundEmail records
+      await tx.inboundEmail.updateMany({
+        where: { originalEmailId: { in: emailIds } },
+        data: { originalEmailId: null },
+      });
+
+      // Clear parentEmailId references in child EmailDrafts (thread replies)
+      await tx.emailDraft.updateMany({
+        where: { parentEmailId: { in: emailIds } },
+        data: { parentEmailId: null },
+      });
+
+      // Delete the emails (EmailEvent cascade delete will handle events)
+      return tx.emailDraft.deleteMany({
+        where: { id: { in: emailIds } },
+      });
     });
 
-    // Delete the emails
-    const result = await prisma.emailDraft.deleteMany({
-      where: { id: { in: emailIds } },
-    });
+    logger.info('Emails deleted', { deletedCount: result.count });
 
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       deleted: result.count,
       message: `Deleted ${result.count} email(s)`,
     });
-  } catch (error) {
-    console.error('Error deleting emails:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete emails' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);

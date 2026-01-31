@@ -1,25 +1,32 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
 
 // POST /api/emails/follow-up - Create follow-up emails for selected emails
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{
+      emailIds: string[];
+      subject: string;
+      bodyText: string;
+    }>(request, logger);
+
     const { emailIds, subject, bodyText } = body;
 
     if (!emailIds || !Array.isArray(emailIds) || emailIds.length === 0) {
-      return NextResponse.json(
-        { error: 'Email IDs are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Email IDs are required');
     }
 
     if (!subject || !bodyText) {
-      return NextResponse.json(
-        { error: 'Subject and body are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Subject and body are required');
     }
+
+    logger.debug('Creating follow-up emails', { emailCount: emailIds.length });
 
     // Get the original emails
     const originalEmails = await prisma.emailDraft.findMany({
@@ -31,10 +38,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (originalEmails.length === 0) {
-      return NextResponse.json(
-        { error: 'No emails found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Emails');
     }
 
     // Create follow-up emails
@@ -79,17 +83,14 @@ export async function POST(request: NextRequest) {
         )
     );
 
-    return NextResponse.json({
+    logger.info('Follow-up emails created', { created: followUpEmails.length });
+
+    return jsonResponse({
       success: true,
       created: followUpEmails.length,
       message: `Created ${followUpEmails.length} follow-up email(s)`,
       emails: followUpEmails.map((e) => e.id),
     });
-  } catch (error) {
-    console.error('Error creating follow-up emails:', error);
-    return NextResponse.json(
-      { error: 'Failed to create follow-up emails' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);

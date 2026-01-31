@@ -1,15 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import aiClient from '@/lib/ai-client';
 import { EmailStatus } from '@prisma/client';
+import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
 // GET /api/emails/[id] - Get email draft details
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Fetching email', { emailId: id });
 
     const email = await prisma.emailDraft.findUnique({
       where: { id },
@@ -31,53 +31,50 @@ export async function GET(
     });
 
     if (!email) {
-      return NextResponse.json(
-        { error: 'Email not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Email');
     }
 
-    return NextResponse.json(email);
-  } catch (error) {
-    console.error('Error fetching email:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch email' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Email fetched', { emailId: id });
+
+    return jsonResponse(email);
+  },
+  { requireAuth: true }
+);
 
 // PATCH /api/emails/[id] - Update email draft
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
-    const body = await request.json();
+export const PATCH = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+    const body = await parseJsonBody<{
+      subject?: string;
+      bodyText?: string;
+      status?: string;
+    }>(request, logger);
+
+    logger.debug('Updating email', { emailId: id });
 
     // Input validation
     if (body.subject !== undefined) {
       if (typeof body.subject !== 'string') {
-        return NextResponse.json({ error: 'Subject must be a string' }, { status: 400 });
+        throw Errors.validation('Subject must be a string', 'subject');
       }
       if (body.subject.length === 0) {
-        return NextResponse.json({ error: 'Subject cannot be empty' }, { status: 400 });
+        throw Errors.validation('Subject cannot be empty', 'subject');
       }
       if (body.subject.length > 200) {
-        return NextResponse.json({ error: 'Subject must be 200 characters or less' }, { status: 400 });
+        throw Errors.validation('Subject must be 200 characters or less', 'subject');
       }
     }
 
     if (body.bodyText !== undefined) {
       if (typeof body.bodyText !== 'string') {
-        return NextResponse.json({ error: 'Body text must be a string' }, { status: 400 });
+        throw Errors.validation('Body text must be a string', 'bodyText');
       }
       if (body.bodyText.length === 0) {
-        return NextResponse.json({ error: 'Body text cannot be empty' }, { status: 400 });
+        throw Errors.validation('Body text cannot be empty', 'bodyText');
       }
       if (body.bodyText.length > 10000) {
-        return NextResponse.json({ error: 'Body text must be 10000 characters or less' }, { status: 400 });
+        throw Errors.validation('Body text must be 10000 characters or less', 'bodyText');
       }
     }
 
@@ -85,7 +82,7 @@ export async function PATCH(
     if (body.status !== undefined) {
       const normalizedStatus = String(body.status).toUpperCase();
       if (!validStatuses.includes(normalizedStatus)) {
-        return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
+        throw Errors.validation(`Invalid status. Must be one of: ${validStatuses.join(', ')}`, 'status');
       }
     }
 
@@ -94,10 +91,7 @@ export async function PATCH(
     });
 
     if (!email) {
-      return NextResponse.json(
-        { error: 'Email not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Email');
     }
 
     // Build update data object
@@ -137,34 +131,52 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error('Error updating email:', error);
-    return NextResponse.json(
-      { error: 'Failed to update email' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Email updated', { emailId: id });
+
+    return jsonResponse(updated);
+  },
+  { requireAuth: true }
+);
 
 // DELETE /api/emails/[id] - Delete email draft
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
 
-    await prisma.emailDraft.delete({
+    logger.debug('Deleting email', { emailId: id });
+
+    // Check if email exists
+    const email = await prisma.emailDraft.findUnique({
       where: { id },
     });
 
-    return NextResponse.json({ message: 'Email deleted' });
-  } catch (error) {
-    console.error('Error deleting email:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete email' },
-      { status: 500 }
-    );
-  }
-}
+    if (!email) {
+      throw Errors.notFound('Email');
+    }
+
+    // Use a transaction to handle all related records
+    await prisma.$transaction(async (tx) => {
+      // Clear originalEmailId references in InboundEmail records
+      await tx.inboundEmail.updateMany({
+        where: { originalEmailId: id },
+        data: { originalEmailId: null },
+      });
+
+      // Clear parentEmailId references in child EmailDrafts (thread replies)
+      await tx.emailDraft.updateMany({
+        where: { parentEmailId: id },
+        data: { parentEmailId: null },
+      });
+
+      // Delete the email (EmailEvent cascade delete will handle events)
+      await tx.emailDraft.delete({
+        where: { id },
+      });
+    });
+
+    logger.info('Email deleted', { emailId: id });
+
+    return jsonResponse({ message: 'Email deleted' });
+  },
+  { requireAuth: true }
+);

@@ -1,9 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import { getUserFilter, getUserIdForCreate } from '@/lib/auth-utils';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  getPaginationParams,
+  buildPaginationMeta,
+  Errors,
+} from '@/lib/api-utils';
 
 // Helper to apply count filters
 function applyCountFilters(
-  businesses: any[],
+  businesses: Array<{ _count: { contacts: number; evidence: number; emailDrafts: number } }>,
   filters: {
     minContacts?: number;
     maxContacts?: number;
@@ -25,12 +34,13 @@ function applyCountFilters(
 }
 
 // GET /api/businesses - List businesses
-export async function GET(request: NextRequest) {
-  try {
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search');
     const industry = searchParams.get('industry');
     const location = searchParams.get('location');
+    const campaignId = searchParams.get('campaignId');
     const minContacts = searchParams.get('minContacts');
     const maxContacts = searchParams.get('maxContacts');
     const minEvidence = searchParams.get('minEvidence');
@@ -41,10 +51,23 @@ export async function GET(request: NextRequest) {
     const dateTo = searchParams.get('dateTo');
     const all = searchParams.get('all') === 'true';
     const includeContacts = searchParams.get('includeContacts') === 'true';
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
+    const filterUserId = searchParams.get('userId'); // Admin can filter by user
 
-    const where: any = {};
+    const { page, limit, skip } = getPaginationParams(request);
+
+    // Get user filter
+    const userFilter = await getUserFilter(filterUserId);
+
+    logger.debug('Fetching businesses', { search, industry, campaignId, page, limit });
+
+    const where: Record<string, unknown> = {
+      ...userFilter, // Apply user filter
+    };
+
+    // Campaign filter
+    if (campaignId) {
+      where.campaignId = campaignId;
+    }
 
     if (search) {
       where.OR = [
@@ -63,9 +86,9 @@ export async function GET(request: NextRequest) {
 
     // Date range filter
     if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo + 'T23:59:59.999Z');
+      where.createdAt = {} as Record<string, Date>;
+      if (dateFrom) (where.createdAt as Record<string, Date>).gte = new Date(dateFrom);
+      if (dateTo) (where.createdAt as Record<string, Date>).lte = new Date(dateTo + 'T23:59:59.999Z');
     }
 
     // Parse count filters
@@ -113,16 +136,15 @@ export async function GET(request: NextRequest) {
         businesses = applyCountFilters(businesses, countFilters);
       }
 
-      return NextResponse.json({
-        businesses,
-        pagination: {
-          total: businesses.length,
+      logger.info('Businesses fetched (all)', { count: businesses.length });
+
+      return jsonResponse(
+        {
+          businesses,
+          pagination: { total: businesses.length },
         },
-      }, {
-        headers: {
-          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
-        },
-      });
+        { cache: 'private, max-age=30, stale-while-revalidate=60' }
+      );
     }
 
     // OPTIMIZED: When no count filters, use direct pagination
@@ -131,7 +153,7 @@ export async function GET(request: NextRequest) {
         prisma.business.findMany({
           where,
           orderBy: { createdAt: 'desc' },
-          skip: (page - 1) * limit,
+          skip,
           take: limit,
           include: {
             _count: {
@@ -146,34 +168,269 @@ export async function GET(request: NextRequest) {
         prisma.business.count({ where }),
       ]);
 
-      return NextResponse.json({
-        businesses,
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages: Math.ceil(total / limit),
+      logger.info('Businesses fetched', { count: businesses.length, total });
+
+      return jsonResponse(
+        {
+          businesses,
+          pagination: buildPaginationMeta(total, page, limit),
         },
-      }, {
-        headers: {
-          'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
-        },
-      });
+        { cache: 'private, max-age=30, stale-while-revalidate=60' }
+      );
     }
 
-    // When count filters are used, we need to fetch with counts and filter
-    // Use select instead of include to reduce payload size
-    let allBusinesses = await prisma.business.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        canonicalName: true,
-        website: true,
-        industryGuess: true,
-        location: true,
-        createdAt: true,
-        updatedAt: true,
+    // When count filters are used, use raw SQL with HAVING for efficient database-level filtering
+    const offset = skip;
+
+    // Build dynamic WHERE conditions
+    const whereConditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (search) {
+      whereConditions.push(`(b.canonical_name ILIKE $${paramIndex} OR b.website ILIKE $${paramIndex})`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+    if (industry) {
+      whereConditions.push(`b.industry_guess ILIKE $${paramIndex}`);
+      params.push(`%${industry}%`);
+      paramIndex++;
+    }
+    if (location) {
+      whereConditions.push(`b.location ILIKE $${paramIndex}`);
+      params.push(`%${location}%`);
+      paramIndex++;
+    }
+    if (dateFrom) {
+      whereConditions.push(`b.created_at >= $${paramIndex}`);
+      params.push(new Date(dateFrom));
+      paramIndex++;
+    }
+    if (dateTo) {
+      whereConditions.push(`b.created_at <= $${paramIndex}`);
+      params.push(new Date(dateTo + 'T23:59:59.999Z'));
+      paramIndex++;
+    }
+
+    // Build HAVING conditions for count filters
+    const havingConditions: string[] = [];
+    if (countFilters.minContacts !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT c.id) >= $${paramIndex}`);
+      params.push(countFilters.minContacts);
+      paramIndex++;
+    }
+    if (countFilters.maxContacts !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT c.id) <= $${paramIndex}`);
+      params.push(countFilters.maxContacts);
+      paramIndex++;
+    }
+    if (countFilters.minEvidence !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT be.id) >= $${paramIndex}`);
+      params.push(countFilters.minEvidence);
+      paramIndex++;
+    }
+    if (countFilters.maxEvidence !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT be.id) <= $${paramIndex}`);
+      params.push(countFilters.maxEvidence);
+      paramIndex++;
+    }
+    if (countFilters.minDrafts !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT ed.id) >= $${paramIndex}`);
+      params.push(countFilters.minDrafts);
+      paramIndex++;
+    }
+    if (countFilters.maxDrafts !== undefined) {
+      havingConditions.push(`COUNT(DISTINCT ed.id) <= $${paramIndex}`);
+      params.push(countFilters.maxDrafts);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
+    const havingClause = havingConditions.length > 0 ? `HAVING ${havingConditions.join(' AND ')}` : '';
+
+    // Get total count with filters
+    const countQuery = `
+      SELECT COUNT(*) as total FROM (
+        SELECT b.id
+        FROM businesses b
+        LEFT JOIN contacts c ON c.business_id = b.id
+        LEFT JOIN business_evidence be ON be.business_id = b.id
+        LEFT JOIN email_drafts ed ON ed.business_id = b.id
+        ${whereClause}
+        GROUP BY b.id
+        ${havingClause}
+      ) filtered
+    `;
+
+    // Get paginated results with filters
+    const dataQuery = `
+      SELECT
+        b.id,
+        b.canonical_name as "canonicalName",
+        b.website,
+        b.industry_guess as "industryGuess",
+        b.location,
+        b.created_at as "createdAt",
+        b.updated_at as "updatedAt",
+        COUNT(DISTINCT c.id)::int as "contactCount",
+        COUNT(DISTINCT be.id)::int as "evidenceCount",
+        COUNT(DISTINCT ed.id)::int as "emailDraftCount"
+      FROM businesses b
+      LEFT JOIN contacts c ON c.business_id = b.id
+      LEFT JOIN business_evidence be ON be.business_id = b.id
+      LEFT JOIN email_drafts ed ON ed.business_id = b.id
+      ${whereClause}
+      GROUP BY b.id
+      ${havingClause}
+      ORDER BY b.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+    `;
+
+    params.push(limit, offset);
+
+    const [countResult, businessesRaw] = await Promise.all([
+      prisma.$queryRawUnsafe<[{ total: bigint }]>(countQuery, ...params.slice(0, -2)),
+      prisma.$queryRawUnsafe<Array<{
+        id: string;
+        canonicalName: string;
+        website: string | null;
+        industryGuess: string | null;
+        location: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+        contactCount: number;
+        evidenceCount: number;
+        emailDraftCount: number;
+      }>>(dataQuery, ...params),
+    ]);
+
+    const total = Number(countResult[0]?.total || 0);
+    const businesses = businessesRaw.map(b => ({
+      ...b,
+      _count: {
+        contacts: b.contactCount,
+        evidence: b.evidenceCount,
+        emailDrafts: b.emailDraftCount,
+      },
+    }));
+
+    logger.info('Businesses fetched with count filters', { count: businesses.length, total });
+
+    return jsonResponse(
+      {
+        businesses,
+        pagination: buildPaginationMeta(total, page, limit),
+      },
+      { cache: 'private, max-age=30, stale-while-revalidate=60' }
+    );
+  },
+  { requireAuth: true }
+);
+
+// DELETE /api/businesses - Delete one or multiple businesses
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{ ids: string[] }>(request, logger);
+    const { ids } = body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      throw Errors.badRequest('At least one business ID is required');
+    }
+
+    logger.debug('Deleting businesses', { count: ids.length });
+
+    // Get user filter (non-admins can only delete their own)
+    const userFilter = await getUserFilter();
+
+    // Use a transaction to handle all deletions properly
+    const result = await prisma.$transaction(async (tx) => {
+      // First, unlink inbound emails (set businessId to null)
+      await tx.inboundEmail.updateMany({
+        where: { businessId: { in: ids } },
+        data: { businessId: null },
+      });
+
+      // Delete businesses (cascades to contacts, evidence, drafts, etc.)
+      const deleteResult = await tx.business.deleteMany({
+        where: {
+          id: { in: ids },
+          ...userFilter, // Users can only delete their own businesses
+        },
+      });
+
+      return deleteResult;
+    });
+
+    logger.info('Businesses deleted', { deletedCount: result.count });
+
+    return jsonResponse({
+      message: `Successfully deleted ${result.count} company(ies)`,
+      deletedCount: result.count,
+    });
+  },
+  { requireAuth: true }
+);
+
+// POST /api/businesses - Create a new business manually
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{
+      name: string;
+      website?: string;
+      industry?: string;
+      location?: string;
+      contacts?: Array<{ email: string; name?: string; role?: string }>;
+      campaignId?: string;
+    }>(request, logger);
+
+    const { name, website, industry, location, contacts, campaignId } = body;
+
+    if (!name || name.trim().length === 0) {
+      throw Errors.badRequest('Company name is required', 'name');
+    }
+
+    logger.debug('Creating business', { name: name.trim() });
+
+    // Get current user ID for ownership
+    const userId = await getUserIdForCreate();
+
+    // Create the business with user ownership
+    const business = await prisma.business.create({
+      data: {
+        userId, // Set owner
+        campaignId: campaignId || null, // Campaign assignment
+        canonicalName: name.trim(),
+        website: website?.trim() || null,
+        industryGuess: industry?.trim() || null,
+        location: location?.trim() || null,
+      },
+    });
+
+    // Create contacts if provided
+    if (contacts && Array.isArray(contacts) && contacts.length > 0) {
+      const validContacts = contacts.filter(
+        (c) => c.email && c.email.trim().length > 0
+      );
+
+      if (validContacts.length > 0) {
+        await prisma.contact.createMany({
+          data: validContacts.map((c) => ({
+            businessId: business.id,
+            email: c.email.trim().toLowerCase(),
+            name: c.name?.trim() || null,
+            role: c.role?.trim() || null,
+            sourceConfidence: 100, // Manual entry = high confidence
+          })),
+        });
+      }
+    }
+
+    // Fetch the created business with counts
+    const result = await prisma.business.findUnique({
+      where: { id: business.id },
+      include: {
+        contacts: true,
         _count: {
           select: {
             contacts: true,
@@ -184,30 +441,9 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    // Apply count filters
-    allBusinesses = applyCountFilters(allBusinesses, countFilters);
+    logger.info('Business created', { businessId: business.id });
 
-    const total = allBusinesses.length;
-    const businesses = allBusinesses.slice((page - 1) * limit, page * limit);
-
-    return NextResponse.json({
-      businesses,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    }, {
-      headers: {
-        'Cache-Control': 'private, max-age=30, stale-while-revalidate=60',
-      },
-    });
-  } catch (error) {
-    console.error('Error fetching businesses:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch businesses' },
-      { status: 500 }
-    );
-  }
-}
+    return jsonResponse(result, { status: 201 });
+  },
+  { requireAuth: true }
+);

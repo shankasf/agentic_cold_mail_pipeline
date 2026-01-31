@@ -1,24 +1,42 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { aiClient } from '@/lib/ai-client';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+  AppError,
+} from '@/lib/api-utils';
+
+interface TemplateGenerateBody {
+  purpose: string;
+  documentContent?: string;
+  contextHints?: {
+    industry?: string;
+    company_type?: string;
+    pain_points?: string[];
+  };
+}
 
 // POST /api/templates/generate - Generate templates based on purpose
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<TemplateGenerateBody>(request, logger);
+
+    logger.debug('Generating templates', { purposeLength: body.purpose?.length });
 
     if (!body.purpose || body.purpose.trim().length < 5) {
-      return NextResponse.json(
-        { error: 'Purpose is required and must be at least 5 characters' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Purpose is required and must be at least 5 characters', 'purpose');
     }
 
     // Check AI service health
     const isHealthy = await aiClient.healthCheck();
     if (!isHealthy) {
-      return NextResponse.json(
-        { error: 'AI service is not available. Please try again later.' },
-        { status: 503 }
+      throw new AppError(
+        'AI service is not available. Please try again later.',
+        'EXTERNAL_SERVICE_ERROR',
+        503,
+        { details: { service: 'ai-service' } }
       );
     }
 
@@ -29,12 +47,9 @@ export async function POST(request: NextRequest) {
       contextHints: body.contextHints,
     });
 
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('Error generating templates:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to generate templates' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Templates generated successfully');
+
+    return jsonResponse(result);
+  },
+  { requireAuth: true }
+);

@@ -1,17 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { createApiHandler, jsonResponse } from '@/lib/api-utils';
 import { handleEmailEvent } from '@/lib/email-sender';
 
 // POST /api/webhooks/ses - Handle SES event webhooks (bounce, complaint, delivery, open, click)
-export async function POST(request: NextRequest) {
-  try {
+export const POST = createApiHandler<unknown>(
+  async (request: NextRequest, { logger, requestId }) => {
     const body = await request.json();
 
     // Handle SNS subscription confirmation
     if (body.Type === 'SubscriptionConfirmation') {
+      logger.info('SNS subscription confirmation received', {
+        topicArn: body.TopicArn,
+      });
       if (body.SubscribeURL) {
         await fetch(body.SubscribeURL);
+        logger.info('SNS subscription confirmed');
       }
-      return NextResponse.json({ message: 'Subscription confirmed' });
+      return jsonResponse({ message: 'Subscription confirmed' }, { requestId });
     }
 
     // Handle SNS notification
@@ -20,13 +25,17 @@ export async function POST(request: NextRequest) {
       try {
         message = JSON.parse(body.Message);
       } catch (parseError) {
-        console.error('Failed to parse SNS message:', parseError, 'Raw message:', body.Message);
-        return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
+        logger.error('Failed to parse SNS message', parseError, {
+          rawMessagePreview: String(body.Message).substring(0, 200),
+        });
+        return jsonResponse({ error: 'Invalid message format' }, { status: 400, requestId });
       }
 
       const eventType = message.eventType || message.notificationType;
       const mail = message.mail;
       const messageId = mail?.messageId;
+
+      logger.debug('Processing SES event', { eventType, messageId });
 
       switch (eventType) {
         case 'Bounce': {
@@ -38,6 +47,11 @@ export async function POST(request: NextRequest) {
               diagnosticCode: recipient.diagnosticCode,
             });
           }
+          logger.info('Bounce event processed', {
+            messageId,
+            bounceType: bounce.bounceType,
+            recipientCount: bounce.bouncedRecipients.length,
+          });
           break;
         }
 
@@ -49,6 +63,11 @@ export async function POST(request: NextRequest) {
               complaintSubType: complaint.complaintSubType,
             });
           }
+          logger.info('Complaint event processed', {
+            messageId,
+            complaintType: complaint.complaintFeedbackType,
+            recipientCount: complaint.complainedRecipients.length,
+          });
           break;
         }
 
@@ -60,6 +79,11 @@ export async function POST(request: NextRequest) {
               smtpResponse: delivery.smtpResponse,
             });
           }
+          logger.info('Delivery event processed', {
+            messageId,
+            recipientCount: delivery.recipients.length,
+            processingTimeMillis: delivery.processingTimeMillis,
+          });
           break;
         }
 
@@ -72,6 +96,7 @@ export async function POST(request: NextRequest) {
               timestamp: open.timestamp,
             });
           }
+          logger.info('Open event processed', { messageId });
           break;
         }
 
@@ -85,6 +110,7 @@ export async function POST(request: NextRequest) {
               timestamp: click.timestamp,
             });
           }
+          logger.info('Click event processed', { messageId, link: click.link });
           break;
         }
 
@@ -94,6 +120,10 @@ export async function POST(request: NextRequest) {
               reason: message.reject?.reason,
             });
           }
+          logger.info('Reject event processed', {
+            messageId,
+            reason: message.reject?.reason,
+          });
           break;
         }
 
@@ -103,6 +133,7 @@ export async function POST(request: NextRequest) {
               timestamp: mail.timestamp,
             });
           }
+          logger.debug('Send event processed', { messageId });
           break;
         }
 
@@ -115,6 +146,10 @@ export async function POST(request: NextRequest) {
               diagnosticCode: recipient.diagnosticCode,
             });
           }
+          logger.info('DeliveryDelay event processed', {
+            messageId,
+            delayType: delay.delayType,
+          });
           break;
         }
 
@@ -127,6 +162,7 @@ export async function POST(request: NextRequest) {
               newTopicPreferences: subscription.newTopicPreferences,
             });
           }
+          logger.info('Subscription event processed', { messageId });
           break;
         }
 
@@ -139,20 +175,19 @@ export async function POST(request: NextRequest) {
               errorMessage: failure?.errorMessage,
             });
           }
+          logger.error('RenderingFailure event processed', null, {
+            messageId,
+            templateName: failure?.templateName,
+            errorMessage: failure?.errorMessage,
+          });
           break;
         }
 
         default:
-          console.log('Unhandled SES event type:', eventType);
+          logger.warn('Unhandled SES event type', { eventType, messageId });
       }
     }
 
-    return NextResponse.json({ message: 'Webhook processed' });
-  } catch (error) {
-    console.error('Error processing SES webhook:', error);
-    return NextResponse.json(
-      { error: 'Webhook processing failed' },
-      { status: 500 }
-    );
+    return jsonResponse({ message: 'Webhook processed' }, { requestId });
   }
-}
+);

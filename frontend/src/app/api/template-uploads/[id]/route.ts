@@ -1,17 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { createApiHandler, jsonResponse, Errors } from '@/lib/api-utils';
 import prisma from '@/lib/prisma';
 
 // GET /api/template-uploads/[id] - Get upload details with rows
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const GET = createApiHandler(
+  async (request, { logger, params }) => {
+    const { id } = params;
     const { searchParams } = new URL(request.url);
     const includeRows = searchParams.get('rows') !== 'false';
     const limit = parseInt(searchParams.get('limit') || '100');
     const offset = parseInt(searchParams.get('offset') || '0');
+
+    logger.debug('Fetching template upload', { id, includeRows, limit, offset });
 
     const upload = await prisma.templateUpload.findUnique({
       where: { id },
@@ -29,10 +28,7 @@ export async function GET(
     });
 
     if (!upload) {
-      return NextResponse.json(
-        { error: 'Upload not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Upload');
     }
 
     // Get row status counts
@@ -58,36 +54,28 @@ export async function GET(
       else if (statusKey === 'error') stats.error = count._count;
     }
 
-    return NextResponse.json({
+    logger.info('Template upload fetched', { id, rowCount: stats.total });
+    return jsonResponse({
       ...upload,
       stats,
     });
-  } catch (error) {
-    console.error('Error fetching upload:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch upload' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);
 
 // DELETE /api/template-uploads/[id] - Delete upload and associated rows
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const DELETE = createApiHandler(
+  async (request, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Deleting template upload', { id });
 
     const upload = await prisma.templateUpload.findUnique({
       where: { id },
     });
 
     if (!upload) {
-      return NextResponse.json(
-        { error: 'Upload not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Upload');
     }
 
     // Delete upload (cascades to rows)
@@ -95,12 +83,8 @@ export async function DELETE(
       where: { id },
     });
 
-    return NextResponse.json({ message: 'Upload deleted' });
-  } catch (error) {
-    console.error('Error deleting upload:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete upload' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Template upload deleted', { id });
+    return jsonResponse({ message: 'Upload deleted' });
+  },
+  { requireAuth: true }
+);

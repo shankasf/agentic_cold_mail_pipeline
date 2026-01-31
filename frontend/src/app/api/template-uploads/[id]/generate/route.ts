@@ -1,14 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { createApiHandler, jsonResponse, Errors } from '@/lib/api-utils';
 import prisma from '@/lib/prisma';
 import { renderEmail, generateSignature, TemplateData } from '@/lib/template-engine';
 
 // POST /api/template-uploads/[id]/generate - Generate emails from template CSV
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const POST = createApiHandler(
+  async (request, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Starting email generation from template upload', { uploadId: id });
 
     // Get upload with template and rows
     const upload = await prisma.templateUpload.findUnique({
@@ -23,24 +22,15 @@ export async function POST(
     });
 
     if (!upload) {
-      return NextResponse.json(
-        { error: 'Upload not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Upload');
     }
 
     if (upload.status !== 'PARSED') {
-      return NextResponse.json(
-        { error: 'Upload is not ready for generation' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Upload is not ready for generation');
     }
 
     if (upload.rows.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid rows to process' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('No valid rows to process');
     }
 
     // Get settings for signature
@@ -52,7 +42,6 @@ export async function POST(
     });
 
     const calendlyUrl = settings?.calendlyUrl || process.env.CALENDLY_URL || '';
-    const businessAddress = settings?.businessAddress || process.env.BUSINESS_ADDRESS || '';
 
     // Get suppression list
     const suppressedEmails = await prisma.suppressionList.findMany({
@@ -172,7 +161,7 @@ export async function POST(
             contactId: contact.id,
             subject: rendered.subject,
             bodyText: rendered.body,
-            footerText: businessAddress,
+            footerText: '',
             personalizationTokens: {
               templateId: upload.template.id,
               templateName: upload.template.name,
@@ -198,7 +187,7 @@ export async function POST(
 
         results.created++;
       } catch (rowError) {
-        console.error(`Error processing row ${row.rowIndex}:`, rowError);
+        logger.error(`Error processing row ${row.rowIndex}`, rowError);
         await prisma.templateRow.update({
           where: { id: row.id },
           data: {
@@ -231,15 +220,11 @@ export async function POST(
       },
     });
 
-    return NextResponse.json({
+    logger.info('Email generation complete', { uploadId: id, results });
+    return jsonResponse({
       message: 'Email generation complete',
       results,
     });
-  } catch (error) {
-    console.error('Error generating emails:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate emails' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);

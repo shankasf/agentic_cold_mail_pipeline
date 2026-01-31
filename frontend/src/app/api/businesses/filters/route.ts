@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { createApiHandler, jsonResponse } from '@/lib/api-utils';
 
 // GET /api/businesses/filters - Get distinct values for filter dropdowns
-export async function GET() {
-  try {
+export const GET = createApiHandler(
+  async (_request, { logger }) => {
+    logger.debug('Fetching filter options');
+
     const [industries, locations] = await Promise.all([
       prisma.business.findMany({
         where: {
@@ -23,19 +25,21 @@ export async function GET() {
       }),
     ]);
 
-    return NextResponse.json({
+    const result = {
       industries: industries
         .map((b) => b.industryGuess)
         .filter((v): v is string => v !== null && v.trim() !== ''),
       locations: locations
         .map((b) => b.location)
         .filter((v): v is string => v !== null && v.trim() !== ''),
+    };
+
+    logger.info('Filter options fetched', {
+      industriesCount: result.industries.length,
+      locationsCount: result.locations.length,
     });
-  } catch (error) {
-    console.error('Error fetching filter options:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch filter options' },
-      { status: 500 }
-    );
-  }
-}
+
+    return jsonResponse(result);
+  },
+  { requireAuth: true }
+);

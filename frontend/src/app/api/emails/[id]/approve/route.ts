@@ -1,23 +1,24 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  Errors,
+} from '@/lib/api-utils';
 
 // POST /api/emails/[id]/approve - Approve an email for sending
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger, params }) => {
+    const { id } = params;
+
+    logger.debug('Approving email', { emailId: id });
 
     const email = await prisma.emailDraft.findUnique({
       where: { id },
     });
 
     if (!email) {
-      return NextResponse.json(
-        { error: 'Email not found' },
-        { status: 404 }
-      );
+      throw Errors.notFound('Email');
     }
 
     // Get admin settings for thresholds
@@ -26,20 +27,14 @@ export async function POST(
 
     // Check if email meets deliverability threshold
     if (email.deliverabilityScore < deliverabilityThreshold) {
-      return NextResponse.json(
-        {
-          error: `Deliverability score (${email.deliverabilityScore}) is below threshold (${deliverabilityThreshold})`,
-        },
-        { status: 400 }
+      throw Errors.badRequest(
+        `Deliverability score (${email.deliverabilityScore}) is below threshold (${deliverabilityThreshold})`
       );
     }
 
     // Check if email is in a state that can be approved
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(email.status)) {
-      return NextResponse.json(
-        { error: `Cannot approve email with status: ${email.status}` },
-        { status: 400 }
-      );
+      throw Errors.badRequest(`Cannot approve email with status: ${email.status}`);
     }
 
     // Update to approved
@@ -48,12 +43,9 @@ export async function POST(
       data: { status: 'APPROVED' },
     });
 
-    return NextResponse.json(updated);
-  } catch (error) {
-    console.error('Error approving email:', error);
-    return NextResponse.json(
-      { error: 'Failed to approve email' },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('Email approved', { emailId: id });
+
+    return jsonResponse(updated);
+  },
+  { requireAuth: true }
+);

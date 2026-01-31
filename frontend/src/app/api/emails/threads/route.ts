@@ -1,15 +1,22 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  getPaginationParams,
+  buildPaginationMeta,
+} from '@/lib/api-utils';
 
 // GET /api/emails/threads - Get email threads grouped by business
-export async function GET(request: NextRequest) {
-  try {
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const searchParams = request.nextUrl.searchParams;
     const businessId = searchParams.get('businessId');
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '20');
+    const { page, limit, skip } = getPaginationParams(request);
 
     if (businessId) {
+      logger.debug('Fetching emails for business', { businessId });
+
       // Get all emails for a specific business, ordered by date
       const emails = await prisma.emailDraft.findMany({
         where: { businessId },
@@ -38,8 +45,12 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      return NextResponse.json({ emails });
+      logger.info('Emails fetched for business', { businessId, count: emails.length });
+
+      return jsonResponse({ emails });
     }
+
+    logger.debug('Fetching email threads', { page, limit });
 
     // Get all businesses with their email counts and latest email
     const businesses = await prisma.business.findMany({
@@ -47,7 +58,7 @@ export async function GET(request: NextRequest) {
         emailDrafts: { some: {} },
       },
       orderBy: { updatedAt: 'desc' },
-      skip: (page - 1) * limit,
+      skip,
       take: limit,
       include: {
         _count: {
@@ -87,20 +98,12 @@ export async function GET(request: NextRequest) {
       primaryContact: b.contacts[0] || null,
     }));
 
-    return NextResponse.json({
+    logger.info('Email threads fetched', { count: threads.length, total });
+
+    return jsonResponse({
       threads,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      pagination: buildPaginationMeta(total, page, limit),
     });
-  } catch (error) {
-    console.error('Error fetching email threads:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch email threads' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);

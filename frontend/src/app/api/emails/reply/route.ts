@@ -1,25 +1,34 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
 
 // POST /api/emails/reply - Create and optionally send a reply to an email thread
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<{
+      businessId: string;
+      contactId: string;
+      subject: string;
+      bodyText: string;
+      sendImmediately?: boolean;
+    }>(request, logger);
+
     const { businessId, contactId, subject, bodyText, sendImmediately = false } = body;
 
     if (!businessId || !contactId) {
-      return NextResponse.json(
-        { error: 'Business ID and Contact ID are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Business ID and Contact ID are required');
     }
 
     if (!subject || !bodyText) {
-      return NextResponse.json(
-        { error: 'Subject and body are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Subject and body are required');
     }
+
+    logger.debug('Creating reply email', { businessId, contactId, sendImmediately });
 
     // Get business and contact
     const [business, contact] = await Promise.all([
@@ -27,11 +36,12 @@ export async function POST(request: NextRequest) {
       prisma.contact.findUnique({ where: { id: contactId } }),
     ]);
 
-    if (!business || !contact) {
-      return NextResponse.json(
-        { error: 'Business or contact not found' },
-        { status: 404 }
-      );
+    if (!business) {
+      throw Errors.notFound('Business');
+    }
+
+    if (!contact) {
+      throw Errors.notFound('Contact');
     }
 
     // Find existing thread for this business/contact combo
@@ -76,56 +86,47 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    logger.info('Reply email created', { emailId: email.id, sendImmediately });
+
     // If sending immediately, send the email
     if (sendImmediately) {
       const { sendEmail } = await import('@/lib/email-sender');
 
-      try {
-        const result = await sendEmail(email.id);
+      const result = await sendEmail(email.id);
 
-        if (result.success) {
-          // Update sentAt timestamp
-          await prisma.emailDraft.update({
-            where: { id: email.id },
-            data: { sentAt: new Date() },
-          });
+      if (result.success) {
+        // Update sentAt timestamp
+        await prisma.emailDraft.update({
+          where: { id: email.id },
+          data: { sentAt: new Date() },
+        });
 
-          return NextResponse.json({
-            success: true,
-            sent: true,
-            email: { ...email, status: 'SENT' },
-            message: 'Reply sent successfully',
-          });
-        } else {
-          return NextResponse.json({
-            success: true,
-            sent: false,
-            email,
-            message: result.error || 'Reply created but failed to send. It has been saved as a draft.',
-          });
-        }
-      } catch (sendError) {
-        console.error('Error sending reply:', sendError);
-        return NextResponse.json({
+        logger.info('Reply sent successfully', { emailId: email.id });
+
+        return jsonResponse({
+          success: true,
+          sent: true,
+          email: { ...email, status: 'SENT' },
+          message: 'Reply sent successfully',
+        });
+      } else {
+        logger.error('Failed to send reply', { emailId: email.id, error: result.error });
+
+        return jsonResponse({
           success: true,
           sent: false,
           email,
-          message: 'Reply created but failed to send. It has been saved as a draft.',
+          message: result.error || 'Reply created but failed to send. It has been saved as a draft.',
         });
       }
     }
 
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       sent: false,
       email,
       message: 'Reply created as draft',
     });
-  } catch (error) {
-    console.error('Error creating reply:', error);
-    return NextResponse.json(
-      { error: 'Failed to create reply' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);

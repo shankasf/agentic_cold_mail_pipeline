@@ -1,32 +1,45 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { renderTemplate } from '@/lib/template-engine';
 import { Prisma } from '@prisma/client';
+import {
+  createApiHandler,
+  jsonResponse,
+  parseJsonBody,
+  Errors,
+} from '@/lib/api-utils';
+
+interface SendTemplateRequest {
+  businessIds: string[];
+  templateId?: string;
+  customSubject?: string;
+  customBody?: string;
+}
 
 // POST /api/businesses/send-template - Send template email to selected businesses
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
+    const body = await parseJsonBody<SendTemplateRequest>(request, logger);
     const { businessIds, templateId, customSubject, customBody } = body;
 
     if (!businessIds || !Array.isArray(businessIds) || businessIds.length === 0) {
-      return NextResponse.json(
-        { error: 'Business IDs are required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Business IDs are required', 'businessIds');
     }
 
     // Either templateId or custom subject/body is required
     const isCustomEmail = customSubject && customBody;
 
     if (!templateId && !isCustomEmail) {
-      return NextResponse.json(
-        { error: 'Template ID or custom email content is required' },
-        { status: 400 }
-      );
+      throw Errors.badRequest('Template ID or custom email content is required');
     }
 
-    let template: { id: string; name: string; subjectTemplate: string; bodyTemplate: string } | null = null;
+    logger.debug('Processing send template request', {
+      businessCount: businessIds.length,
+      templateId,
+      isCustomEmail,
+    });
+
+    let template: { id: string; name: string; subjectTemplate: string; bodyTemplate: string };
 
     if (templateId) {
       // Get template
@@ -35,17 +48,11 @@ export async function POST(request: NextRequest) {
       });
 
       if (!dbTemplate) {
-        return NextResponse.json(
-          { error: 'Template not found' },
-          { status: 404 }
-        );
+        throw Errors.notFound('Template');
       }
 
       if (!dbTemplate.isActive) {
-        return NextResponse.json(
-          { error: 'Template is not active' },
-          { status: 400 }
-        );
+        throw Errors.badRequest('Template is not active');
       }
 
       template = {
@@ -59,8 +66,8 @@ export async function POST(request: NextRequest) {
       template = {
         id: 'custom',
         name: 'Custom Email',
-        subjectTemplate: customSubject,
-        bodyTemplate: customBody,
+        subjectTemplate: customSubject!,
+        bodyTemplate: customBody!,
       };
     }
 
@@ -151,17 +158,19 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({
+    logger.info('Template emails queued', {
+      queued,
+      skipped,
+      templateId: template.id,
+      templateName: template.name,
+    });
+
+    return jsonResponse({
       success: true,
       queued,
       skipped,
       message: `Queued ${queued} emails, skipped ${skipped}`,
     });
-  } catch (error) {
-    console.error('Error sending template emails:', error);
-    return NextResponse.json(
-      { error: 'Failed to send template emails' },
-      { status: 500 }
-    );
-  }
-}
+  },
+  { requireAuth: true }
+);
