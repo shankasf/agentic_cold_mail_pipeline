@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getUserFilter, getUserIdForCreate } from '@/lib/auth-utils';
 import {
@@ -11,8 +11,8 @@ import {
 } from '@/lib/api-utils';
 
 // Helper to apply count filters
-function applyCountFilters(
-  businesses: Array<{ _count: { contacts: number; evidence: number; emailDrafts: number } }>,
+function applyCountFilters<T extends { _count: { contacts: number; evidence: number; emailDrafts: number } }>(
+  businesses: T[],
   filters: {
     minContacts?: number;
     maxContacts?: number;
@@ -21,7 +21,7 @@ function applyCountFilters(
     minDrafts?: number;
     maxDrafts?: number;
   }
-) {
+): T[] {
   return businesses.filter((b) => {
     if (filters.minContacts !== undefined && b._count.contacts < filters.minContacts) return false;
     if (filters.maxContacts !== undefined && b._count.contacts > filters.maxContacts) return false;
@@ -34,9 +34,8 @@ function applyCountFilters(
 }
 
 // GET /api/businesses - List businesses
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const GET = createApiHandler<any>(
-  async (request: NextRequest, { logger }): Promise<NextResponse> => {
+export const GET = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search');
     const industry = searchParams.get('industry');

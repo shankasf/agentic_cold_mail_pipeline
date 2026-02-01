@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { addEmailSendJob } from '@/lib/queue';
 import { startOfDay } from 'date-fns';
@@ -33,9 +33,8 @@ import {
  * 4. Updates each email with assigned identity
  * 5. Queues them for sending
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const POST = createApiHandler<any>(
-  async (request: NextRequest, { logger }): Promise<NextResponse> => {
+export const POST = createApiHandler(
+  async (request: NextRequest, { logger }) => {
     const body = await parseJsonBody<{
       emailIds?: string[];
       approveFirst?: boolean;

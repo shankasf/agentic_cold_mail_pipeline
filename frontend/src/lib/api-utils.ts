@@ -42,7 +42,7 @@ export interface OptionalAuthContext {
 export type ApiHandler<T = unknown> = (
   request: NextRequest,
   context: HandlerContext
-) => Promise<NextResponse<T>>;
+) => Promise<NextResponse<T>> | Promise<NextResponse>;
 
 /**
  * API handler function type with optional auth
@@ -50,7 +50,7 @@ export type ApiHandler<T = unknown> = (
 export type OptionalAuthHandler<T = unknown> = (
   request: NextRequest,
   context: OptionalAuthContext
-) => Promise<NextResponse<T>>;
+) => Promise<NextResponse<T>> | Promise<NextResponse>;
 
 /**
  * Options for createApiHandler
