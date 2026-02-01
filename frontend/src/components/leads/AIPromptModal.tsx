@@ -655,7 +655,7 @@ export function AIPromptSidebar({
                 <h4 className="font-medium text-gray-900 mb-2">Data Sources</h4>
                 <p className="text-sm text-gray-500">
                   The AI will use available data to research leads.
-                  Results are based on the model's training data and provided context.
+                  Results are based on the model&apos;s training data and provided context.
                 </p>
               </div>
             </div>
