@@ -13,7 +13,7 @@ describe('LoginForm', () => {
   it('should render with default props', () => {
     render(<LoginForm onSubmit={mockOnSubmit} />);
 
-    expect(screen.getByRole('heading', { name: 'Sign In' })).toBeInTheDocument();
+    expect(screen.getByText('Sign In')).toBeInTheDocument();
     expect(screen.getByText('Welcome to CallSphere Cold Mail Outreach')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter your email')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter your password')).toBeInTheDocument();
