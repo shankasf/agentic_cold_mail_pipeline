@@ -130,7 +130,7 @@ function isPrismaError(error: unknown): error is PrismaError {
     error instanceof Error &&
     'code' in error &&
     typeof (error as PrismaError).code === 'string' &&
-    (error as PrismaError).code?.startsWith('P')
+    ((error as PrismaError).code?.startsWith('P') ?? false)
   );
 }
 
