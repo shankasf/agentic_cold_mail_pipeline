@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { Mail, ChevronRight, Send, Clock, CheckCircle, Reply, Loader2, Building2, User, AlertCircle, X } from 'lucide-react';
+import { Mail, ChevronRight, Send, Clock, CheckCircle, Reply, Loader2, Building2, User, AlertCircle, X, CheckCheck } from 'lucide-react';
 import { format } from 'date-fns';
 import { ErrorState } from '@/components/LoadingStates';
 
@@ -50,6 +50,70 @@ export default function ThreadDetailPage() {
   const [sendingReply, setSendingReply] = useState(false);
   const [sendImmediately, setSendImmediately] = useState(false);
   const [selectedContact, setSelectedContact] = useState<string>('');
+  const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
+
+  // Subscribe to real-time email event updates via SSE
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connect = () => {
+      eventSource = new EventSource('/api/emails/events/stream');
+
+      eventSource.onopen = () => {
+        setSseConnected(true);
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'email_event' && data.emailId) {
+            // Update the email's status in real-time
+            setEmails((prevEmails) =>
+              prevEmails.map((email) => {
+                if (email.id === data.emailId) {
+                  let newStatus = email.status;
+                  let newSentAt = email.sentAt;
+
+                  switch (data.eventType) {
+                    case 'SENT':
+                      newStatus = 'SENT';
+                      newSentAt = new Date().toISOString();
+                      break;
+                    case 'BOUNCE':
+                      newStatus = 'BOUNCED';
+                      break;
+                    case 'COMPLAINT':
+                      newStatus = 'COMPLAINT';
+                      break;
+                  }
+                  return { ...email, status: newStatus, sentAt: newSentAt };
+                }
+                return email;
+              })
+            );
+          }
+        } catch {
+          // Ignore parse errors for heartbeat messages
+        }
+      };
+
+      eventSource.onerror = () => {
+        setSseConnected(false);
+        eventSource?.close();
+        // Reconnect after 5 seconds
+        reconnectTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      eventSource?.close();
+      clearTimeout(reconnectTimeout);
+    };
+  }, []);
 
   const fetchEmails = useCallback(async () => {
     setLoading(true);
@@ -140,12 +204,13 @@ export default function ThreadDetailPage() {
     }
   };
 
-  const handleSendEmail = async (emailId: string) => {
+  const handleSendEmail = async (emailId: string, approveFirst: boolean = false) => {
+    setSendingEmailId(emailId);
     try {
       const res = await fetch('/api/emails/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailIds: [emailId] }),
+        body: JSON.stringify({ emailIds: [emailId], approveFirst }),
       });
 
       const data = await res.json();
@@ -155,11 +220,39 @@ export default function ThreadDetailPage() {
       }
 
       if (data.queued > 0) {
-        alert('Email queued for sending!');
+        alert(approveFirst ? 'Email approved and queued for sending!' : 'Email queued for sending!');
         fetchEmails();
+      } else {
+        alert('No emails were queued. The email may already be sent or suppressed.');
       }
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to send email');
+    } finally {
+      setSendingEmailId(null);
+    }
+  };
+
+  const handleApproveEmail = async (emailId: string) => {
+    setSendingEmailId(emailId);
+    try {
+      const res = await fetch(`/api/emails/${emailId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'APPROVED' }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to approve email');
+      }
+
+      alert('Email approved!');
+      fetchEmails();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to approve email');
+    } finally {
+      setSendingEmailId(null);
     }
   };
 
@@ -206,7 +299,15 @@ export default function ThreadDetailPage() {
             <Building2 className="w-8 h-8 text-primary-600" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{businessName}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-gray-900">{businessName}</h1>
+              {sseConnected && (
+                <span className="inline-flex items-center gap-1 text-xs text-green-600" title="Real-time updates active">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  Live
+                </span>
+              )}
+            </div>
             {businessIndustry && (
               <p className="text-gray-500">{businessIndustry}</p>
             )}
@@ -305,12 +406,47 @@ export default function ThreadDetailPage() {
 
               {/* Actions */}
               <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
+                {/* Draft or Needs Review - show Approve & Send */}
+                {['DRAFT', 'NEEDS_REVIEW'].includes(email.status) && (
+                  <>
+                    <button
+                      onClick={() => handleSendEmail(email.id, true)}
+                      disabled={sendingEmailId === email.id}
+                      className="btn-primary text-sm flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {sendingEmailId === email.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <CheckCheck className="w-3.5 h-3.5" />
+                      )}
+                      Approve & Send
+                    </button>
+                    <button
+                      onClick={() => handleApproveEmail(email.id)}
+                      disabled={sendingEmailId === email.id}
+                      className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {sendingEmailId === email.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <CheckCircle className="w-3.5 h-3.5" />
+                      )}
+                      Approve Only
+                    </button>
+                  </>
+                )}
+                {/* Approved - show Send Now */}
                 {email.status === 'APPROVED' && (
                   <button
                     onClick={() => handleSendEmail(email.id)}
-                    className="btn-primary text-sm flex items-center gap-1"
+                    disabled={sendingEmailId === email.id}
+                    className="btn-primary text-sm flex items-center gap-1 disabled:opacity-50"
                   >
-                    <Send className="w-3.5 h-3.5" />
+                    {sendingEmailId === email.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
                     Send Now
                   </button>
                 )}

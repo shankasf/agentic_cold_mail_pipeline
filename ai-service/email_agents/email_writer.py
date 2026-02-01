@@ -1,52 +1,125 @@
 """
 Email Writer Agent
-Generates short, personalized cold emails for booking demos.
+Generates short, personalized cold emails that start conversations.
+Follows strict formatting rules for maximum deliverability and engagement.
 """
+import random
 from agents import Agent
 from schemas import EmailWriterOutput
 import config
 
-INSTRUCTIONS = f"""You are an expert cold email copywriter. Your task is to write short, personalized cold emails that book demos.
+# Opening types to rotate randomly
+OPENING_TYPES = [
+    "observation",      # Notice something specific about their business
+    "hypothesis",       # Pose a theory about their situation
+    "micro-story",      # Brief 1-sentence story about similar company
+    "data-discovery",   # Share a surprising data point
+    "casual",           # Relaxed, conversational opener
+    "direct",           # Get straight to the point
+]
 
-SENDER IDENTITY:
-- Name: {config.SENDER_NAME}
-- Title: {config.SENDER_TITLE}
-- Company: {config.COMPANY_NAME} - AI Voice Agents for businesses
-- Email: {config.SENDER_EMAIL}
+INSTRUCTIONS = f"""You are an expert cold email copywriter. You write emails that sound like a founder thinking out loud, not a salesperson closing a deal.
 
-EMAIL STRUCTURE (70-110 words total, excluding signature):
-1. OPENING (1 line): Reference ONE fact about their business from the provided evidence
-2. VALUE (1-2 lines): Explain how AI voice agents help businesses like theirs
-3. CTA (1 line): Clear call-to-action to book a demo with the Calendly link
-4. SIGNATURE: Must end EXACTLY like this:
+SENDER: {config.SENDER_NAME} from CallSphere
+PRODUCT: Custom AI voice and chat agent designed for your business
 
-Best regards,
+=== SUBJECT LINE RULES (CRITICAL) ===
+- 2-4 words only
+- All lowercase
+- Sounds neutral or internal, like a teammate note, not a vendor pitch
+- NEVER a question
+- NEVER outcome-obvious (don't reveal what you're selling)
+
+GOOD SUBJECTS:
+- "manual reply math"
+- "overnight sales"
+- "content vs. replies"
+- "after-hours gap"
+- "call routing thought"
+
+BAD SUBJECTS (NEVER USE):
+- "Are you losing sales?" (question)
+- "Quick question about your workflow" (vendor pitch)
+- "AI solution for your business" (outcome-obvious)
+- "Increase your revenue" (salesy)
+
+=== EMAIL BODY STRUCTURE (100-140 words) ===
+
+1. GREETING: "Hi [First Name],"
+
+2. OPENING (1 line): Founder thinking out loud. Curiosity or observation.
+   ROTATE between these styles:
+   - Observation: Notice something specific about their business
+   - Hypothesis: Pose a theory about their situation
+   - Micro-story: Brief story about similar company (1 sentence)
+   - Data discovery: Share a surprising insight
+   - Casual: Relaxed, conversational
+   - Direct: Get straight to the point
+
+   NEVER START WITH:
+   - "Quick question:"
+   - "I came across"
+   - "I noticed you"
+   - "I saw that"
+   - "I wanted to reach out"
+
+3. PROBLEM (2-4 short sentences):
+   - Use facts from BusinessAnalyzer to ground in reality
+   - Paint a specific scene they recognize
+   - One idea per sentence
+   - Make the cost obvious without saying it
+   - Short sentences only
+
+4. PRODUCT INTRO (2-3 sentences):
+   - First sentence connects directly back to the problem
+   - Mention core capability first: "Custom AI voice and chat agent"
+   - Layer in max 2 supporting features organically
+   - NEVER list features with bullets or commas
+   - Only mention platforms/tools if BusinessAnalyzer found them
+
+5. SETUP LINE (exactly once):
+   - Mention "5-minute setup" exactly once, naturally woven in
+   - Example: "Takes about 5 minutes to set up."
+
+6. CTA (1 question):
+   - Ties back to this email's specific angle
+   - Feels like conversation permission, not a sales push
+
+   GOOD CTAs:
+   - "Want to see how it handles [specific scenario]?"
+   - "Am I off here?"
+   - "Does this match what you're seeing?"
+   - "Worth a look?"
+
+   BAD CTAs (NEVER USE):
+   - "Happy to share if helpful"
+   - "Let me know if interested"
+   - "Would love to chat"
+   - "Can I send you more info?"
+
+7. SIGNATURE:
+Best,
 {config.SENDER_NAME}
-{config.SENDER_TITLE}
-{config.COMPANY_NAME}
 
-CALENDLY LINK: {config.CALENDLY_URL}
+=== CRITICAL RULES ===
+- USE facts/evidence from BusinessAnalyzer to ground the problem
+- Only mention platforms/tools that were provided - NEVER add extras
+- NO em dashes (—) anywhere in the email
+- NO links or URLs
+- Short sentences only
+- Plain text formatting
+- Every email is standalone - never reference a previous email
+- Sound like a founder noticing a pattern, not a salesperson
+- 100-140 words for body (excluding greeting and signature)
 
-CRITICAL RULES:
-- Word count: EXACTLY 70-110 words (NOT counting signature block)
-- Include the phrase "book a demo" near the CTA
-- Include the Calendly link EXACTLY ONCE in the CTA - no other links allowed
-- ALWAYS end with the exact signature block shown above
-- NO unsubscribe text or link
-- NO spammy language (avoid: "amazing", "incredible", "don't miss out", multiple exclamation points)
-- Personalization must use ONLY facts from the provided evidence
-- Keep it conversational and professional
-- Subject line: 5-10 words, personalized, no spam triggers
-
-GOOD SUBJECT EXAMPLES:
-- "Quick question about [Company]'s phone support"
-- "AI voice agents for [Industry] businesses"
-- "Idea for [Company]'s customer calls"
-
-BAD SUBJECT EXAMPLES (AVOID):
-- "You won't believe this opportunity!!!"
-- "URGENT: Limited time offer"
-- "Free consultation inside!"
+=== AVOID THESE PHRASES ===
+- "I came across [Company]"
+- "I noticed you're part of"
+- "Quick question"
+- "Are you leveraging"
+- "I'd love to know if this is on your radar"
+- "If it makes sense"
+- Generic questions about "voice or chat automation"
 """
 
 email_writer_agent = Agent(
@@ -81,50 +154,74 @@ async def write_email(
 
     # Format business info
     contact_name = contact.get('name') or 'there'
+    first_name = contact_name.split()[0] if contact_name != 'there' else 'there'
     business_name = business.get('canonical_name', 'your company')
+    industry = business.get('industry_guess', 'Unknown')
 
     # Format facts
     facts_text = "\n".join([
         f"- {f['type']}: {f['value']} (confidence: {f['confidence']}%)"
         for f in facts_used
-    ])
+    ]) if facts_used else "No specific facts available"
 
-    # Format playbook hints
-    hints = ""
-    if industry_playbook:
-        value_props = industry_playbook.get('valueProps', [])[:2]
-        if value_props:
-            hints = f"\nValue propositions to consider: {', '.join(value_props)}"
+    # Extract platforms/tools from facts
+    platforms = [f['value'] for f in facts_used if f['type'].lower() in ['tools', 'platform', 'software', 'crm', 'services']]
+    platforms_text = f"\nPlatforms/Tools found: {', '.join(platforms)}" if platforms else "\nNo specific platforms/tools identified - do NOT mention any"
+
+    # Randomly select opening type
+    opening_type = random.choice(OPENING_TYPES)
 
     pain_text = f"\nInferred pain point: {pain_point}" if pain_point else ""
 
-    prompt = f"""Write a cold email to book a demo.
+    # Role context
+    role_context = ""
+    if contact.get('role'):
+        role_context = f"\n- Their Role: {contact.get('role')}"
 
-RECIPIENT:
-- Contact: {contact_name}
-- Email: {contact.get('email')}
-- Role: {contact.get('role', 'N/A')}
-- Business: {business_name}
-- Industry: {business.get('industry_guess', 'N/A')}
-- Location: {business.get('location', 'N/A')}
+    location_context = ""
+    if business.get('location'):
+        location_context = f"\n- Location: {business.get('location')}"
 
-FACTS TO USE FOR PERSONALIZATION (use at least one):
+    prompt = f"""Write a cold email following the exact structure and rules.
+
+=== RECIPIENT ===
+- First Name: {first_name}
+- Company: {business_name}
+- Industry: {industry}{role_context}{location_context}
+
+=== FACTS FROM BUSINESS ANALYZER (use these for personalization) ===
 {facts_text}
+{platforms_text}
 {pain_text}
-{hints}
 
-Remember:
-- 70-110 words ONLY (not counting signature)
-- Include "book a demo" in CTA
-- Include Calendly link exactly once: {config.CALENDLY_URL}
-- MUST end with signature:
-  Best regards,
-  {config.SENDER_NAME}
-  {config.SENDER_TITLE}
-  {config.COMPANY_NAME}
-- NO unsubscribe text
-- NO spam language
-- Subject: 5-10 words, personalized"""
+=== OPENING STYLE FOR THIS EMAIL ===
+Use a "{opening_type}" style opening.
+- observation: Notice something specific about their business
+- hypothesis: Pose a theory about their situation
+- micro-story: Brief 1-sentence story about similar company
+- data-discovery: Share a surprising data point
+- casual: Relaxed, conversational opener
+- direct: Get straight to the point
+
+=== YOUR TASK ===
+1. SUBJECT: 2-4 words, lowercase, neutral/internal sounding, NOT a question
+
+2. BODY (100-140 words):
+   - Greeting: "Hi {first_name},"
+   - Opening: Use "{opening_type}" style (1 line, founder thinking out loud)
+   - Problem: 2-4 short sentences using the facts above
+   - Product intro: Connect to problem, mention "custom AI voice and chat agent"
+   - Setup line: Mention "5-minute setup" exactly once
+   - CTA: One question tied to the angle (not "happy to share" or "let me know")
+   - Sign off: "Best,\\n{config.SENDER_NAME}"
+
+=== CRITICAL REMINDERS ===
+- NO em dashes (—)
+- NO "I came across" or "I noticed you"
+- NO "Quick question:"
+- Only mention platforms if listed above
+- Short sentences only
+- 100-140 words for body"""
 
     result = await Runner.run(email_writer_agent, prompt)
     return result.final_output_as(EmailWriterOutput)

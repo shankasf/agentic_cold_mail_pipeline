@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useCallback, memo, useEffect } from 'react';
 import {
   Upload,
   Building2,
@@ -18,35 +18,78 @@ import {
   LogOut,
   Loader2,
   Users,
+  Inbox,
+  ShieldCheck,
+  FolderKanban,
+  UserCheck,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
+interface SidebarCounts {
+  campaigns: number;
+  companies: number;
+  emails: number;
+  pendingEmails: number;
+  inbox: number;
+  uploads: number;
+  leads: number;
+}
+
+// Badge keys for each nav item
+type BadgeKey = keyof SidebarCounts | null;
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ElementType;
+  badgeKey?: BadgeKey;
+  badgeColor?: 'primary' | 'warning' | 'success' | 'danger';
+}
+
 // Create section - importing data and generating emails
-const createNav = [
+const createNav: NavItem[] = [
   { name: 'Overview', href: '/dashboard', icon: Home },
-  { name: 'Import Data', href: '/dashboard/uploads', icon: Upload },
-  { name: 'Companies', href: '/dashboard/businesses', icon: Building2 },
+  { name: 'Campaigns', href: '/dashboard/campaigns', icon: FolderKanban, badgeKey: 'campaigns', badgeColor: 'primary' },
+  { name: 'Import Data', href: '/dashboard/uploads', icon: Upload, badgeKey: 'uploads', badgeColor: 'warning' },
+  { name: 'Companies', href: '/dashboard/businesses', icon: Building2, badgeKey: 'companies', badgeColor: 'success' },
   { name: 'Templates', href: '/dashboard/templates', icon: FileText },
 ];
 
 // Manage section - reviewing and sending emails
-const manageNav = [
-  { name: 'Emails', href: '/dashboard/emails', icon: Mail },
+const manageNav: NavItem[] = [
+  { name: 'Emails', href: '/dashboard/emails', icon: Mail, badgeKey: 'emails', badgeColor: 'danger' },
+  { name: 'Leads', href: '/dashboard/leads', icon: UserCheck, badgeKey: 'leads', badgeColor: 'success' },
+  { name: 'Inbox', href: '/dashboard/unibox', icon: Inbox, badgeKey: 'inbox', badgeColor: 'danger' },
   { name: 'Activity', href: '/dashboard/email-logs', icon: ScrollText },
   { name: 'Downloads', href: '/dashboard/exports', icon: Download },
   { name: 'Reports', href: '/dashboard/analytics', icon: BarChart3 },
 ];
 
 // Admin-only navigation
-const adminNav = [
+const adminNav: NavItem[] = [
+  { name: 'Identities', href: '/dashboard/identities', icon: ShieldCheck },
   { name: 'Users', href: '/dashboard/users', icon: Users },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 
-function NavSection({ title, items, pathname, onNavigate }: {
+const badgeColors = {
+  primary: 'bg-primary-500 text-white',
+  warning: 'bg-yellow-500 text-white',
+  success: 'bg-green-500 text-white',
+  danger: 'bg-red-500 text-white',
+};
+
+const NavSection = memo(function NavSection({
+  title,
+  items,
+  pathname,
+  counts,
+  onNavigate
+}: {
   title: string;
-  items: typeof createNav;
+  items: NavItem[];
   pathname: string;
+  counts: SidebarCounts | null;
   onNavigate?: () => void;
 }) {
   return (
@@ -57,38 +100,96 @@ function NavSection({ title, items, pathname, onNavigate }: {
       {items.map((item) => {
         const isActive = pathname === item.href ||
           (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
+
+        const badgeCount = item.badgeKey && counts ? counts[item.badgeKey] : 0;
+        const showBadge = badgeCount > 0;
+
         return (
           <Link
             key={item.name}
             href={item.href}
             onClick={onNavigate}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
               isActive
                 ? 'bg-primary-600 text-white'
                 : 'text-gray-300 hover:bg-gray-800 hover:text-white'
             }`}
           >
-            <item.icon className="h-5 w-5" />
-            {item.name}
+            <div className="flex items-center gap-3">
+              <item.icon className="h-5 w-5" />
+              {item.name}
+            </div>
+            {showBadge && (
+              <span className={`
+                min-w-[20px] h-5 px-1.5 flex items-center justify-center
+                text-xs font-bold rounded-full
+                ${isActive ? 'bg-white/20 text-white' : badgeColors[item.badgeColor || 'primary']}
+              `}>
+                {badgeCount > 99 ? '99+' : badgeCount}
+              </span>
+            )}
           </Link>
         );
       })}
     </div>
   );
-}
+});
 
 interface SidebarProps {
   isOpen?: boolean;
   onClose?: () => void;
 }
 
-export default function Sidebar({ isOpen, onClose }: SidebarProps) {
+const Sidebar = memo(function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
   const { isAdmin, user, loading } = useAuth();
+  const [counts, setCounts] = useState<SidebarCounts | null>(null);
 
-  const handleLogout = async () => {
+  // Fetch sidebar counts
+  useEffect(() => {
+    const fetchCounts = async () => {
+      try {
+        const res = await fetch('/api/sidebar-counts');
+        if (res.ok) {
+          const data = await res.json();
+          setCounts(data);
+        }
+      } catch (error) {
+        console.error('Error fetching sidebar counts:', error);
+      }
+    };
+
+    // Initial fetch
+    fetchCounts();
+
+    // Refresh counts every 30 seconds
+    const interval = setInterval(fetchCounts, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Refetch counts when pathname changes (user navigates)
+  useEffect(() => {
+    const fetchCounts = async () => {
+      try {
+        const res = await fetch('/api/sidebar-counts');
+        if (res.ok) {
+          const data = await res.json();
+          setCounts(data);
+        }
+      } catch (error) {
+        // Silent fail
+      }
+    };
+
+    // Small delay to allow any data changes to be saved
+    const timeout = setTimeout(fetchCounts, 500);
+    return () => clearTimeout(timeout);
+  }, [pathname]);
+
+  const handleLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
@@ -98,7 +199,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
     } finally {
       setLoggingOut(false);
     }
-  };
+  }, [router]);
 
   return (
     <>
@@ -120,7 +221,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         <div className="flex h-full flex-col">
           <div className="flex h-16 items-center justify-between px-6 shrink-0">
-            <span className="text-xl font-bold text-white">Outreach</span>
+            <span className="text-xl font-bold text-white">CallSphere</span>
             <button
               onClick={onClose}
               className="lg:hidden text-gray-400 hover:text-white"
@@ -130,10 +231,10 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </button>
           </div>
           <nav className="flex-1 overflow-y-auto px-3 py-4">
-            <NavSection title="Create" items={createNav} pathname={pathname} onNavigate={onClose} />
-            <NavSection title="Manage" items={manageNav} pathname={pathname} onNavigate={onClose} />
+            <NavSection title="Create" items={createNav} pathname={pathname} counts={counts} onNavigate={onClose} />
+            <NavSection title="Manage" items={manageNav} pathname={pathname} counts={counts} onNavigate={onClose} />
             {!loading && isAdmin && (
-              <NavSection title="Admin" items={adminNav} pathname={pathname} onNavigate={onClose} />
+              <NavSection title="Admin" items={adminNav} pathname={pathname} counts={counts} onNavigate={onClose} />
             )}
           </nav>
           <div className="border-t border-gray-800 p-4 shrink-0 space-y-3">
@@ -158,16 +259,18 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
               )}
               {loggingOut ? 'Logging out...' : 'Logout'}
             </button>
-            <p className="text-xs text-gray-500">Outreach v1.0</p>
+            <p className="text-xs text-gray-500">Cold Mail Outreach v1.0</p>
           </div>
         </div>
       </aside>
     </>
   );
-}
+});
+
+export default Sidebar;
 
 // Mobile header component
-export function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
+export const MobileHeader = memo(function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
   return (
     <header className="lg:hidden flex items-center justify-between bg-gray-900 px-4 py-3 shrink-0">
       <button
@@ -177,8 +280,8 @@ export function MobileHeader({ onMenuClick }: { onMenuClick: () => void }) {
       >
         <Menu className="h-6 w-6" />
       </button>
-      <span className="text-lg font-bold text-white">Outreach</span>
+      <span className="text-lg font-bold text-white">CallSphere</span>
       <div className="w-6" />
     </header>
   );
-}
+});

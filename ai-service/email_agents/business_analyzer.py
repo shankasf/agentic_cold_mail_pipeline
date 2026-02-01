@@ -1,26 +1,114 @@
 """
 Business Analyzer Agent
 Analyzes a business and its evidence to extract facts for personalization.
+Identifies pain themes based on industry and extracts platforms/tools used.
 """
 from agents import Agent
 from schemas import BusinessAnalyzerOutput
 import config
 
-INSTRUCTIONS = """You are an expert business analyst. Your task is to analyze a business and its associated evidence to:
+# Industry-specific pain themes mapping
+INDUSTRY_PAIN_THEMES = {
+    "healthcare": [
+        "missed patient calls after hours",
+        "appointment no-shows and scheduling chaos",
+        "staff overwhelmed with routine inquiries",
+        "long hold times frustrating patients",
+    ],
+    "dental": [
+        "missed appointment requests after hours",
+        "staff juggling phones and patients",
+        "no-shows eating into revenue",
+        "new patient calls going to voicemail",
+    ],
+    "legal": [
+        "potential clients calling after hours",
+        "intake calls interrupting billable work",
+        "missed calls from leads who won't call back",
+        "staff screening calls instead of legal work",
+    ],
+    "real estate": [
+        "leads calling when you're showing properties",
+        "after-hours inquiries from serious buyers",
+        "missing calls during open houses",
+        "competitors answering faster",
+    ],
+    "hvac": [
+        "emergency calls at 2am going to voicemail",
+        "dispatching delays costing jobs",
+        "seasonal call spikes overwhelming staff",
+        "technicians missing dispatch updates",
+    ],
+    "plumbing": [
+        "emergency calls missed overnight",
+        "customers hanging up after long holds",
+        "office staff buried in scheduling",
+        "weekend calls going unanswered",
+    ],
+    "roofing": [
+        "storm leads calling all at once",
+        "missing calls while on job sites",
+        "seasonal demand spikes overwhelming phones",
+        "competitors getting to leads first",
+    ],
+    "insurance": [
+        "quote requests sitting in voicemail",
+        "renewals requiring manual follow-up",
+        "claims calls overwhelming staff",
+        "after-hours policy questions unanswered",
+    ],
+    "financial services": [
+        "high-value leads going to voicemail",
+        "compliance requirements slowing response",
+        "advisors interrupted by routine calls",
+        "after-hours inquiries from busy professionals",
+    ],
+    "e-commerce": [
+        "order status calls overwhelming support",
+        "cart abandonment with no follow-up",
+        "returns and exchanges creating backlogs",
+        "international customers in different timezones",
+    ],
+    "saas": [
+        "trial users churning without engagement",
+        "support tickets piling up",
+        "onboarding calls not getting scheduled",
+        "enterprise leads expecting immediate response",
+    ],
+    "agency": [
+        "client calls interrupting creative work",
+        "new business inquiries going cold",
+        "project status updates consuming hours",
+        "after-hours requests from demanding clients",
+    ],
+    "default": [
+        "valuable leads going to voicemail",
+        "staff overwhelmed with routine calls",
+        "after-hours inquiries left unanswered",
+        "response time slower than competitors",
+    ],
+}
+
+INSTRUCTIONS = """You are an expert business analyst specializing in B2B outreach research.
+
+YOUR TASK: Analyze a business and its evidence to extract facts for email personalization.
 
 1. SELECT UP TO 3 FACTS for email personalization:
    - Each fact must be directly supported by the provided evidence
    - Each fact must include chunk_id for traceability
    - Assign confidence (0-100) based on how clearly the evidence supports the fact
-   - Prefer facts about: industry, services, tools used, company size, location
+   - Prioritize facts about: platforms/tools used, services offered, company size, specific challenges
 
-2. INFER A PAIN POINT (optional):
-   - Only if strongly supported by evidence
-   - Must be a real business pain point that AI voice agents could solve
-   - Common pain points: missed calls, after-hours inquiries, appointment scheduling, customer service overload
+2. IDENTIFY PLATFORMS/TOOLS:
+   - Look for CRM systems (Salesforce, HubSpot, Zoho, etc.)
+   - Look for communication tools (phone systems, chat widgets, Zendesk, Intercom, etc.)
+   - Look for scheduling tools (Calendly, Acuity, etc.)
+   - ONLY mention platforms explicitly found in evidence - never assume or add extras
 
-3. SUGGEST INDUSTRY PLAYBOOK UPDATES (optional):
-   - If you discover new insights about this industry
+3. INFER A PAIN POINT:
+   - Select a pain theme that matches their industry
+   - Ground it in specific evidence about their business
+   - Make it concrete and relatable to their situation
 
 4. DETERMINE IF REVIEW IS NEEDED:
    - Set needs_review=true if fewer than 2 facts have confidence >= 70
@@ -28,6 +116,7 @@ INSTRUCTIONS = """You are an expert business analyst. Your task is to analyze a 
 
 CRITICAL RULES:
 - NEVER INVENT FACTS - only use information directly from evidence
+- NEVER ADD platforms/tools not explicitly mentioned in evidence
 - Each fact MUST have a valid chunk_id
 - Be conservative with confidence scores
 - Quality over quantity - 2 solid facts are better than 3 weak ones
@@ -39,6 +128,25 @@ business_analyzer_agent = Agent(
     model=config.OPENAI_MODEL,
     output_type=BusinessAnalyzerOutput,
 )
+
+
+def get_pain_themes_for_industry(industry: str | None) -> list[str]:
+    """Get relevant pain themes for an industry."""
+    if not industry:
+        return INDUSTRY_PAIN_THEMES["default"]
+
+    industry_lower = industry.lower()
+
+    # Try exact match first
+    if industry_lower in INDUSTRY_PAIN_THEMES:
+        return INDUSTRY_PAIN_THEMES[industry_lower]
+
+    # Try partial match
+    for key, themes in INDUSTRY_PAIN_THEMES.items():
+        if key in industry_lower or industry_lower in key:
+            return themes
+
+    return INDUSTRY_PAIN_THEMES["default"]
 
 
 async def analyze_business(
@@ -61,11 +169,14 @@ async def analyze_business(
     """
     from agents import Runner
 
+    industry = business.get('industry_guess', '')
+    pain_themes = get_pain_themes_for_industry(industry)
+
     # Format business info
     business_info = f"""
 Business: {business.get('canonical_name', 'Unknown')}
 Website: {business.get('website', 'N/A')}
-Industry (guessed): {business.get('industry_guess', 'N/A')}
+Industry: {industry or 'N/A'}
 Location: {business.get('location', 'N/A')}
 """
 
@@ -82,6 +193,9 @@ Location: {business.get('location', 'N/A')}
         for e in evidence
         if (cid := e.get('chunk_id')) and cid in chunk_map
     ])
+
+    # Format pain themes for this industry
+    pain_themes_text = "\n".join([f"- {theme}" for theme in pain_themes])
 
     # Format playbook if available
     playbook_text = ""
@@ -102,9 +216,21 @@ EVIDENCE:
 RELEVANT CHUNKS:
 {chunks_text}
 
+INDUSTRY-SPECIFIC PAIN THEMES TO CONSIDER:
+{pain_themes_text}
+
 {playbook_text}
 
-Select up to 3 facts with evidence, infer a pain point if supported, and determine if review is needed."""
+YOUR TASK:
+1. Select up to 3 facts with evidence (prioritize platforms/tools found)
+2. Identify any platforms/tools explicitly mentioned (CRM, phone system, chat, scheduling, etc.)
+3. Infer a pain point grounded in evidence AND relevant to their industry
+4. Determine if review is needed
+
+IMPORTANT:
+- Only mention platforms/tools that are EXPLICITLY found in the evidence
+- Never add tools like "phone systems" or "CRM" unless evidence specifically mentions them
+- Ground the pain point in their specific situation, not generic industry problems"""
 
     result = await Runner.run(business_analyzer_agent, prompt)
     return result.final_output_as(BusinessAnalyzerOutput)

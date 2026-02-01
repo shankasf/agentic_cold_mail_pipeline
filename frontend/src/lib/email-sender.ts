@@ -1,6 +1,341 @@
 import nodemailer from 'nodemailer';
 import prisma from './prisma';
 import { startOfDay } from 'date-fns';
+import { publishEmailEvent } from './redis';
+import { SESIdentity } from '@prisma/client';
+
+/**
+ * Find an SES identity for a given email address.
+ * First tries exact email match, then falls back to domain identity.
+ */
+async function findIdentityForEmail(email: string): Promise<SESIdentity | null> {
+  // Try exact email match first
+  let identity = await prisma.sESIdentity.findUnique({
+    where: { emailAddress: email },
+  });
+
+  if (identity) {
+    return identity;
+  }
+
+  // Try domain match (e.g., @callsphere.tech)
+  const domain = email.split('@')[1];
+  if (domain) {
+    identity = await prisma.sESIdentity.findFirst({
+      where: {
+        emailAddress: `@${domain}`,
+        identityType: 'DOMAIN',
+        status: { in: ['VERIFIED', 'ACTIVE', 'WARMING'] },
+      },
+    });
+  }
+
+  return identity;
+}
+
+// Protected identities - these are primary/main emails that should only be used as last resort
+// to preserve their reputation and keep them available for important communications
+const PROTECTED_IDENTITIES = [
+  'sagar@callsphere.tech',
+];
+
+/**
+ * Get all available SES identities with remaining quota.
+ * Returns identities sorted by priority:
+ * 1. Non-protected identities with most remaining quota first
+ * 2. Protected identities last (only used as fallback)
+ */
+export async function getAvailableIdentities(includeProtected: boolean = true): Promise<SESIdentity[]> {
+  const identities = await prisma.sESIdentity.findMany({
+    where: {
+      status: { in: ['VERIFIED', 'ACTIVE', 'WARMING'] },
+      identityType: 'EMAIL', // Only email identities can send
+    },
+  });
+
+  // Filter to only those with remaining quota
+  const available = identities.filter(i => i.sentToday < i.dailyLimit);
+
+  // Separate protected and non-protected identities
+  const nonProtected = available.filter(i => !PROTECTED_IDENTITIES.includes(i.emailAddress));
+  const protectedOnes = available.filter(i => PROTECTED_IDENTITIES.includes(i.emailAddress));
+
+  // Sort each group by remaining quota (most remaining first)
+  const sortByRemaining = (a: SESIdentity, b: SESIdentity) => {
+    const remainingA = a.dailyLimit - a.sentToday;
+    const remainingB = b.dailyLimit - b.sentToday;
+    return remainingB - remainingA;
+  };
+
+  nonProtected.sort(sortByRemaining);
+  protectedOnes.sort(sortByRemaining);
+
+  // Return non-protected first, then protected (if included)
+  return includeProtected ? [...nonProtected, ...protectedOnes] : nonProtected;
+}
+
+/**
+ * Find the best available identity with remaining quota.
+ * Strategy:
+ * 1. First try non-protected identities with most remaining quota
+ * 2. Only fall back to protected identities when all others are exhausted
+ * This protects primary emails (like sagar@callsphere.tech) for important communications.
+ */
+export async function findBestAvailableIdentity(): Promise<SESIdentity | null> {
+  // First, try non-protected identities only
+  const nonProtectedIdentities = await getAvailableIdentities(false);
+
+  if (nonProtectedIdentities.length > 0) {
+    // Return the one with most remaining quota (already sorted)
+    console.log(`[Identity Router] Using non-protected identity: ${nonProtectedIdentities[0].emailAddress} (${nonProtectedIdentities[0].dailyLimit - nonProtectedIdentities[0].sentToday} remaining)`);
+    return nonProtectedIdentities[0];
+  }
+
+  // If no non-protected identities available, fall back to protected ones
+  const allIdentities = await getAvailableIdentities(true);
+
+  if (allIdentities.length > 0) {
+    console.log(`[Identity Router] WARNING: All non-protected identities exhausted. Falling back to protected identity: ${allIdentities[0].emailAddress}`);
+    return allIdentities[0];
+  }
+
+  console.log('[Identity Router] ERROR: No identities available with remaining quota');
+  return null;
+}
+
+/**
+ * Get total available quota across all identities
+ * Shows breakdown between protected and non-protected identities
+ */
+export async function getTotalAvailableQuota(): Promise<{
+  totalRemaining: number;
+  nonProtectedRemaining: number;
+  protectedRemaining: number;
+  identities: Array<{
+    id: string;
+    email: string;
+    displayName: string;
+    remaining: number;
+    dailyLimit: number;
+    sentToday: number;
+    isProtected: boolean;
+  }>;
+}> {
+  const identities = await getAvailableIdentities(true);
+
+  const result = identities.map(i => ({
+    id: i.id,
+    email: i.emailAddress,
+    displayName: i.displayName || i.emailAddress,
+    remaining: i.dailyLimit - i.sentToday,
+    dailyLimit: i.dailyLimit,
+    sentToday: i.sentToday,
+    isProtected: PROTECTED_IDENTITIES.includes(i.emailAddress),
+  }));
+
+  const nonProtectedRemaining = result
+    .filter(i => !i.isProtected)
+    .reduce((sum, i) => sum + i.remaining, 0);
+
+  const protectedRemaining = result
+    .filter(i => i.isProtected)
+    .reduce((sum, i) => sum + i.remaining, 0);
+
+  return {
+    totalRemaining: nonProtectedRemaining + protectedRemaining,
+    nonProtectedRemaining,
+    protectedRemaining,
+    identities: result,
+  };
+}
+
+/**
+ * Distribute emails EVENLY across identities to balance the load.
+ * Strategy:
+ * 1. Calculate total available capacity across non-protected identities
+ * 2. Distribute emails proportionally based on each identity's remaining capacity
+ * 3. Use round-robin within the proportional allocation to spread evenly
+ * 4. Only use protected identities when non-protected are fully exhausted
+ * Returns a map of emailDraftId -> identityId assignments.
+ */
+export async function distributeEmailsAcrossIdentities(
+  emailDraftIds: string[]
+): Promise<{
+  assignments: Map<string, { identityId: string; fromEmail: string; fromName: string }>;
+  unassigned: string[];
+  quotaInfo: { totalAssigned: number; identityBreakdown: Record<string, number> };
+}> {
+  // Get identities in priority order (non-protected first, protected last)
+  const identities = await getAvailableIdentities(true);
+  const assignments = new Map<string, { identityId: string; fromEmail: string; fromName: string }>();
+  const unassigned: string[] = [];
+  const identityBreakdown: Record<string, number> = {};
+
+  // Separate into non-protected and protected
+  const nonProtected = identities.filter(i => !PROTECTED_IDENTITIES.includes(i.emailAddress));
+  const protectedOnes = identities.filter(i => PROTECTED_IDENTITIES.includes(i.emailAddress));
+
+  // Track how many we've assigned to each identity
+  const assignedCounts: Record<string, number> = {};
+  for (const identity of identities) {
+    assignedCounts[identity.id] = 0;
+    identityBreakdown[identity.emailAddress] = 0;
+  }
+
+  // Helper to get remaining capacity for an identity
+  const getRemaining = (identity: SESIdentity) => {
+    return identity.dailyLimit - identity.sentToday - assignedCounts[identity.id];
+  };
+
+  // Calculate total available capacity for non-protected identities
+  const totalNonProtectedCapacity = nonProtected.reduce((sum, i) => sum + getRemaining(i), 0);
+  const emailCount = emailDraftIds.length;
+
+  console.log(`[Identity Router] Distributing ${emailCount} emails across ${nonProtected.length} non-protected identities (total capacity: ${totalNonProtectedCapacity})`);
+
+  // Calculate how many emails each identity should get (proportional to remaining capacity)
+  // Then use round-robin to assign evenly
+  const identityAllocations: Map<string, number> = new Map();
+
+  if (totalNonProtectedCapacity > 0 && nonProtected.length > 0) {
+    // If we have more capacity than emails, distribute evenly
+    if (totalNonProtectedCapacity >= emailCount) {
+      const emailsPerIdentity = Math.floor(emailCount / nonProtected.length);
+      const remainder = emailCount % nonProtected.length;
+
+      nonProtected.forEach((identity, index) => {
+        const allocation = Math.min(
+          emailsPerIdentity + (index < remainder ? 1 : 0),
+          getRemaining(identity)
+        );
+        identityAllocations.set(identity.id, allocation);
+      });
+    } else {
+      // More emails than capacity - distribute proportionally to remaining capacity
+      let remainingEmails = emailCount;
+      nonProtected.forEach(identity => {
+        const remaining = getRemaining(identity);
+        const proportion = remaining / totalNonProtectedCapacity;
+        const allocation = Math.min(Math.ceil(emailCount * proportion), remaining, remainingEmails);
+        identityAllocations.set(identity.id, allocation);
+        remainingEmails -= allocation;
+      });
+    }
+  }
+
+  // Round-robin assignment across non-protected identities
+  let identityIndex = 0;
+  for (const emailId of emailDraftIds) {
+    let assigned = false;
+    let attempts = 0;
+
+    // Try non-protected identities (round-robin for even distribution)
+    while (!assigned && attempts < nonProtected.length) {
+      const identity = nonProtected[identityIndex % nonProtected.length];
+      const remaining = getRemaining(identity);
+
+      if (remaining > 0) {
+        assignments.set(emailId, {
+          identityId: identity.id,
+          fromEmail: identity.emailAddress,
+          fromName: identity.displayName || identity.emailAddress.split('@')[0],
+        });
+        assignedCounts[identity.id]++;
+        identityBreakdown[identity.emailAddress]++;
+        assigned = true;
+      }
+
+      identityIndex++;
+      attempts++;
+    }
+
+    // If all non-protected are exhausted, try protected identities as last resort
+    if (!assigned) {
+      for (const identity of protectedOnes) {
+        if (getRemaining(identity) > 0) {
+          console.log(`[Identity Router] WARNING: Using protected identity ${identity.emailAddress} (non-protected exhausted)`);
+          assignments.set(emailId, {
+            identityId: identity.id,
+            fromEmail: identity.emailAddress,
+            fromName: identity.displayName || identity.emailAddress.split('@')[0],
+          });
+          assignedCounts[identity.id]++;
+          identityBreakdown[identity.emailAddress]++;
+          assigned = true;
+          break;
+        }
+      }
+    }
+
+    if (!assigned) {
+      unassigned.push(emailId);
+    }
+  }
+
+  // Log distribution summary
+  console.log(`[Identity Router] Distribution complete:`, {
+    total: emailDraftIds.length,
+    assigned: assignments.size,
+    unassigned: unassigned.length,
+    breakdown: identityBreakdown,
+  });
+
+  return {
+    assignments,
+    unassigned,
+    quotaInfo: {
+      totalAssigned: assignments.size,
+      identityBreakdown,
+    },
+  };
+}
+
+/**
+ * Assign identity to an email draft and update its fromEmail/fromName
+ */
+export async function assignIdentityToEmailDraft(
+  emailDraftId: string,
+  identityId: string,
+  fromEmail: string,
+  fromName: string
+): Promise<void> {
+  await prisma.emailDraft.update({
+    where: { id: emailDraftId },
+    data: {
+      fromEmail,
+      fromName,
+      sesIdentityId: identityId,
+    },
+  });
+}
+
+/**
+ * Check if identity has remaining daily quota
+ */
+async function checkIdentityQuota(identity: SESIdentity): Promise<{ canSend: boolean; reason?: string }> {
+  if (identity.status === 'PAUSED') {
+    return { canSend: false, reason: 'Identity is paused' };
+  }
+
+  if (identity.sentToday >= identity.dailyLimit) {
+    return { canSend: false, reason: `Identity daily limit reached (${identity.sentToday}/${identity.dailyLimit})` };
+  }
+
+  return { canSend: true };
+}
+
+/**
+ * Increment the sent count for an identity
+ */
+async function incrementIdentitySentCount(identityId: string): Promise<void> {
+  await prisma.sESIdentity.update({
+    where: { id: identityId },
+    data: {
+      sentToday: { increment: 1 },
+      lastSentAt: new Date(),
+    },
+  });
+}
 
 // Generate professional HTML email from plain text
 function generateHtmlEmail(bodyText: string, footerText: string, senderName: string): string {
@@ -119,12 +454,18 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
       };
     }
 
-    // Get email draft
+    // Get email draft with parent email for threading
     const email = await prisma.emailDraft.findUnique({
       where: { id: emailDraftId },
       include: {
         contact: true,
         business: true,
+        parentEmail: {
+          select: {
+            sesMessageId: true,
+            threadId: true,
+          },
+        },
       },
     });
 
@@ -132,8 +473,25 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
       return { success: false, error: 'Email draft not found' };
     }
 
+    // IMPORTANT: Prevent resending - only send APPROVED emails that haven't been sent
+    if (email.status === 'SENT') {
+      console.log(`[sendEmail] Skipping already sent email: ${emailDraftId}`);
+      return { success: true, error: 'Email already sent (skipped)' };
+    }
+
+    if (email.status === 'BOUNCED' || email.status === 'COMPLAINT') {
+      console.log(`[sendEmail] Skipping ${email.status} email: ${emailDraftId}`);
+      return { success: false, error: `Email status is ${email.status}, cannot resend` };
+    }
+
     if (email.status !== 'APPROVED') {
       return { success: false, error: `Email status is ${email.status}, not APPROVED` };
+    }
+
+    // Double-check: if sentAt is set, email was already sent
+    if (email.sentAt) {
+      console.log(`[sendEmail] Skipping email with sentAt timestamp: ${emailDraftId}`);
+      return { success: true, error: 'Email already sent (skipped)' };
     }
 
     // Check suppression list
@@ -141,15 +499,106 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
       return { success: false, error: 'Email is in suppression list' };
     }
 
-    // Compose full email body with footer
-    const fullBody = `${email.bodyText}\n\n${email.footerText}`;
+    // Find identity - try assigned identity first, then fromEmail match, then auto-assign
+    let identity = email.sesIdentityId
+      ? await prisma.sESIdentity.findUnique({ where: { id: email.sesIdentityId } })
+      : await findIdentityForEmail(email.fromEmail);
 
-    // Generate HTML version of the email
-    const htmlBody = generateHtmlEmail(email.bodyText, email.footerText, email.fromName);
+    // Check if we need to auto-assign a different identity
+    let needsAutoAssign = false;
+    if (!identity) {
+      needsAutoAssign = true;
+    } else {
+      const quotaCheck = await checkIdentityQuota(identity);
+      if (!quotaCheck.canSend) {
+        needsAutoAssign = true;
+      }
+    }
+
+    // Auto-assign best available identity if needed
+    if (needsAutoAssign) {
+      const newIdentity = await findBestAvailableIdentity();
+      if (!newIdentity) {
+        return { success: false, error: 'No SES identity available with remaining quota' };
+      }
+      identity = newIdentity;
+
+      // Update the email draft with the new identity
+      await prisma.emailDraft.update({
+        where: { id: emailDraftId },
+        data: {
+          fromEmail: identity.emailAddress,
+          fromName: identity.displayName || identity.emailAddress.split('@')[0],
+          sesIdentityId: identity.id,
+        },
+      });
+
+      // Refresh email data
+      email.fromEmail = identity.emailAddress;
+      email.fromName = identity.displayName || identity.emailAddress.split('@')[0];
+    }
+
+    // At this point identity is guaranteed to be non-null
+    if (!identity) {
+      return { success: false, error: 'No SES identity available' };
+    }
+
+    // Final quota check (in case of race condition)
+    const quotaCheck = await checkIdentityQuota(identity);
+    if (!quotaCheck.canSend) {
+      return { success: false, error: quotaCheck.reason };
+    }
+
+    // Compose full email body (footer should be empty, but include if present for backward compatibility)
+    const fullBody = email.footerText ? `${email.bodyText}\n\n${email.footerText}` : email.bodyText;
+
+    // Generate HTML version of the email (pass empty string for footer to avoid any address)
+    const htmlBody = generateHtmlEmail(email.bodyText, '', email.fromName);
 
     // Generate unsubscribe link (using mailto for simplicity)
     const unsubscribeEmail = email.fromEmail;
     const unsubscribeLink = `mailto:${unsubscribeEmail}?subject=Unsubscribe&body=Please%20remove%20me%20from%20your%20mailing%20list.`;
+
+    // Build headers - include threading headers for follow-up emails
+    const headers: Record<string, string> = {
+      'List-Unsubscribe': `<${unsubscribeLink}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      'X-Priority': '3',
+      'X-Mailer': 'CallSphere Mailer',
+    };
+
+    // Add threading headers if this is a follow-up email
+    if (email.parentEmail?.sesMessageId) {
+      const parentMessageId = email.parentEmail.sesMessageId;
+      // In-Reply-To header tells email clients this is a reply to the immediate parent
+      headers['In-Reply-To'] = `<${parentMessageId}>`;
+
+      // Build References header with all message IDs in the thread chain
+      // This ensures proper threading even for long email chains
+      const references: string[] = [];
+      if (email.threadId) {
+        // Get all sent emails in this thread to build full References chain
+        const threadEmails = await prisma.emailDraft.findMany({
+          where: {
+            threadId: email.threadId,
+            sesMessageId: { not: null },
+            status: 'SENT',
+          },
+          select: { sesMessageId: true },
+          orderBy: { sentAt: 'asc' },
+        });
+        references.push(...threadEmails.map(e => `<${e.sesMessageId}>`));
+      } else {
+        // Fallback: just use parent message ID
+        references.push(`<${parentMessageId}>`);
+      }
+
+      if (references.length > 0) {
+        headers['References'] = references.join(' ');
+      }
+
+      console.log(`[sendEmail] Threading follow-up to parent message: ${parentMessageId}, thread references: ${references.length}`);
+    }
 
     // Send via SMTP with proper headers
     const info = await transporter.sendMail({
@@ -159,29 +608,47 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
       subject: email.subject,
       text: fullBody,
       html: htmlBody,
-      headers: {
-        'List-Unsubscribe': `<${unsubscribeLink}>`,
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        'X-Priority': '3',
-        'X-Mailer': 'CallSphere Mailer',
+      headers,
+    });
+
+    // Extract clean message ID (remove angle brackets if present)
+    const messageId = info.messageId?.replace(/[<>]/g, '') || null;
+
+    // Update email status, store SES message ID, and link to identity
+    await prisma.emailDraft.update({
+      where: { id: emailDraftId },
+      data: {
+        status: 'SENT',
+        sentAt: new Date(),
+        sesMessageId: messageId,
+        sesIdentityId: identity.id,
       },
     });
 
-    // Update email status
-    await prisma.emailDraft.update({
-      where: { id: emailDraftId },
-      data: { status: 'SENT' },
-    });
+    // Increment identity sent count
+    await incrementIdentitySentCount(identity.id);
 
     // Record event
     await prisma.emailEvent.create({
       data: {
         emailDraftId,
         eventType: 'SENT',
-        providerMessageId: info.messageId,
+        providerMessageId: messageId,
         eventPayload: { response: info.response },
       },
     });
+
+    // Publish real-time event for connected clients
+    try {
+      await publishEmailEvent(
+        emailDraftId,
+        'SENT',
+        email.contact.email,
+        email.business.canonicalName
+      );
+    } catch (e) {
+      console.error('Error publishing SENT event:', e);
+    }
 
     return { success: true };
   } catch (error) {
@@ -198,6 +665,86 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
 
     return { success: false, error: String(error) };
   }
+}
+
+/**
+ * Send a notification/system email (not tracked as marketing email)
+ */
+export async function sendNotificationEmail(params: {
+  to: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const fromEmail = process.env.NOTIFICATION_FROM_EMAIL || 'noreply@callsphere.tech';
+    const fromName = process.env.NOTIFICATION_FROM_NAME || 'CallSphere';
+
+    const htmlBody = params.bodyHtml || generateNotificationHtml(params.bodyText, params.subject);
+
+    await transporter.sendMail({
+      from: `${fromName} <${fromEmail}>`,
+      to: params.to,
+      subject: params.subject,
+      text: params.bodyText,
+      html: htmlBody,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error sending notification email:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Generate HTML for notification emails
+ */
+function generateNotificationHtml(bodyText: string, title: string): string {
+  const bodyHtml = bodyText
+    .split('\n\n')
+    .map(paragraph => `<p style="margin: 0 0 16px 0; line-height: 1.6;">${paragraph.replace(/\n/g, '<br>')}</p>`)
+    .join('');
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 16px; color: #333333; background-color: #f5f5f5;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f5f5f5;">
+    <tr>
+      <td align="center" style="padding: 40px 20px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
+          <!-- Header -->
+          <tr>
+            <td style="padding: 30px 40px 20px 40px; border-bottom: 1px solid #eeeeee;">
+              <h1 style="margin: 0; font-size: 24px; color: #4f46e5;">CallSphere</h1>
+            </td>
+          </tr>
+          <!-- Body -->
+          <tr>
+            <td style="padding: 30px 40px;">
+              ${bodyHtml}
+            </td>
+          </tr>
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 20px 40px; background-color: #fafafa; border-radius: 0 0 8px 8px;">
+              <p style="margin: 0; font-size: 12px; color: #999999; text-align: center;">
+                This is an automated message from CallSphere. Please do not reply to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`.trim();
 }
 
 // Add email to suppression list
@@ -235,19 +782,30 @@ export async function handleEmailEvent(
   providerMessageId?: string,
   payload?: Record<string, unknown>
 ): Promise<void> {
-  // Find the email draft by provider message ID or email
+  // Clean the message ID (remove angle brackets if present)
+  const cleanMessageId = providerMessageId?.replace(/[<>]/g, '');
+
+  // Find the email draft by sesMessageId first (most reliable)
   let emailDraft;
 
-  if (providerMessageId) {
-    const event = await prisma.emailEvent.findFirst({
-      where: { providerMessageId },
-      include: { emailDraft: true },
+  if (cleanMessageId) {
+    // First try to find by sesMessageId on EmailDraft
+    emailDraft = await prisma.emailDraft.findUnique({
+      where: { sesMessageId: cleanMessageId },
     });
-    emailDraft = event?.emailDraft;
+
+    // If not found, try by providerMessageId in events
+    if (!emailDraft) {
+      const event = await prisma.emailEvent.findFirst({
+        where: { providerMessageId: cleanMessageId },
+        include: { emailDraft: true },
+      });
+      emailDraft = event?.emailDraft;
+    }
   }
 
   if (!emailDraft) {
-    // Try to find by contact email
+    // Try to find by contact email as last resort
     const contact = await prisma.contact.findUnique({
       where: { email },
     });
@@ -261,6 +819,8 @@ export async function handleEmailEvent(
       });
     }
   }
+
+  console.log(`[SES Webhook] Event: ${type}, Email: ${email}, MessageId: ${cleanMessageId}, Found: ${!!emailDraft}`);
 
   // Record the event if email draft found
   if (emailDraft) {
@@ -286,6 +846,23 @@ export async function handleEmailEvent(
         eventPayload: (payload || {}) as object,
       },
     });
+
+    // Publish real-time event for connected clients
+    try {
+      // Get business name for display
+      const emailWithBusiness = await prisma.emailDraft.findUnique({
+        where: { id: emailDraft.id },
+        include: { business: { select: { canonicalName: true } } },
+      });
+      await publishEmailEvent(
+        emailDraft.id,
+        eventTypeMap[type],
+        email,
+        emailWithBusiness?.business?.canonicalName
+      );
+    } catch (e) {
+      console.error('Error publishing email event:', e);
+    }
   }
 
   // Add to suppression list for bounces and complaints only

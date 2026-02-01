@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
 import Link from 'next/link';
-import { Building2, Mail, FileText, ExternalLink, Search, Sparkles, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp, Save, Edit2, Trash2 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { Building2, Mail, FileText, ExternalLink, Search, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
+import CampaignFilter from '@/components/CampaignFilter';
 
 interface Business {
   id: string;
@@ -18,13 +19,6 @@ interface Business {
     evidence: number;
     emailDrafts: number;
   };
-}
-
-interface GeneratedTemplate {
-  name: string;
-  subjectTemplate: string;
-  bodyTemplate: string;
-  description: string;
 }
 
 interface Filters {
@@ -55,8 +49,10 @@ const defaultFilters: Filters = {
   dateTo: '',
 };
 
-export default function BusinessesPage() {
+function BusinessesPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const campaignId = searchParams.get('campaignId');
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
@@ -71,14 +67,22 @@ export default function BusinessesPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectAll, setSelectAll] = useState(false);
 
-  // AI Template Generation state
-  const [showAiModal, setShowAiModal] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [generatedTemplates, setGeneratedTemplates] = useState<GeneratedTemplate[]>([]);
-  const [aiInsights, setAiInsights] = useState('');
-  const [editingGeneratedIdx, setEditingGeneratedIdx] = useState<number | null>(null);
-  const [savingTemplate, setSavingTemplate] = useState<number | null>(null);
-  const [purpose, setPurpose] = useState('');
+  // Email Generation state
+  const [generatingEmails, setGeneratingEmails] = useState(false);
+
+  // Delete state
+  const [deleting, setDeleting] = useState(false);
+
+  // Create Company modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newCompany, setNewCompany] = useState({
+    name: '',
+    website: '',
+    industry: '',
+    location: '',
+  });
+  const [newContacts, setNewContacts] = useState([{ email: '', name: '', role: '' }]);
 
   const activeFilterCount = Object.entries(filters).filter(
     ([key, value]) => value !== '' && key !== 'search'
@@ -88,6 +92,7 @@ export default function BusinessesPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), limit: '20' });
+      if (campaignId) params.set('campaignId', campaignId);
       if (filters.search) params.set('search', filters.search);
       if (filters.industry) params.set('industry', filters.industry);
       if (filters.location) params.set('location', filters.location);
@@ -110,7 +115,7 @@ export default function BusinessesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, filters]);
+  }, [page, filters, campaignId]);
 
   const fetchFilterOptions = useCallback(async () => {
     try {
@@ -172,6 +177,7 @@ export default function BusinessesPage() {
       // Fetch all business IDs with current filters
       try {
         const params = new URLSearchParams({ all: 'true' });
+        if (campaignId) params.set('campaignId', campaignId);
         if (filters.search) params.set('search', filters.search);
         if (filters.industry) params.set('industry', filters.industry);
         if (filters.location) params.set('location', filters.location);
@@ -193,134 +199,188 @@ export default function BusinessesPage() {
     }
   };
 
-  // AI Template Generation handlers
-  const openAiModal = () => {
-    setShowAiModal(true);
-    setGeneratedTemplates([]);
-    setAiInsights('');
-    setEditingGeneratedIdx(null);
-    setPurpose('');
-  };
+  // Generate Emails handler
+  const handleGenerateEmails = async () => {
+    if (selectedIds.length === 0) return;
 
-  const generateTemplatesFromBusinesses = async () => {
-    if (selectedIds.length === 0 || !purpose.trim()) return;
-
-    setGenerating(true);
-    setGeneratedTemplates([]);
-    setAiInsights('');
+    setGeneratingEmails(true);
 
     try {
-      // Fetch business details to build context
-      const selectedBusinesses = selectAll
-        ? businesses
-        : businesses.filter(b => selectedIds.includes(b.id));
-
-      // Build document content from selected businesses
-      const documentContent = selectedBusinesses.map(b => {
-        return `Company: ${b.canonicalName}
-Website: ${b.website || 'N/A'}
-Industry: ${b.industryGuess || 'Unknown'}
-Location: ${b.location || 'Unknown'}
-Contacts: ${b._count.contacts}
-Data Points: ${b._count.evidence}`;
-      }).join('\n\n---\n\n');
-
-      // Get unique industries for context
-      const industries = [...new Set(selectedBusinesses.map(b => b.industryGuess).filter(Boolean))];
-
-      const res = await fetch('/api/templates/generate', {
+      const res = await fetch('/api/businesses/generate-emails', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          purpose: purpose.trim(),
-          documentContent: `Business Information:\n\n${documentContent}`,
-          contextHints: {
-            industry: industries.join(', '),
-            company_type: 'B2B prospects',
-          },
+          businessIds: selectedIds,
         }),
       });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to generate templates');
-      }
 
       const data = await res.json();
-      setGeneratedTemplates(data.template ? [data.template] : []);
-      setAiInsights(data.insights || '');
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.error || 'Failed to generate emails');
+      }
+
+      // Build message with warning if any
+      let message = data.message || `Generated ${data.emailsCreated} email(s)`;
+      if (data.warning) {
+        message += `\n\n⚠️ Warning: ${data.warning}`;
+      }
+
+      alert(message);
+
+      // Redirect to emails list if any emails were created
+      if (data.emailsCreated > 0) {
+        router.push('/dashboard/emails');
+      }
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to generate templates');
+      alert(error instanceof Error ? error.message : 'Failed to generate emails');
     } finally {
-      setGenerating(false);
+      setGeneratingEmails(false);
     }
   };
 
-  const handleSaveGeneratedTemplate = async (template: GeneratedTemplate, index: number) => {
-    setSavingTemplate(index);
+  // Delete companies handler
+  const handleDeleteCompanies = async (idsToDelete: string[]) => {
+    if (idsToDelete.length === 0) return;
+
+    const confirmMessage = idsToDelete.length === 1
+      ? 'Are you sure you want to delete this company? This will also delete all associated contacts, evidence, and email drafts.'
+      : `Are you sure you want to delete ${idsToDelete.length} companies? This will also delete all associated contacts, evidence, and email drafts.`;
+
+    if (!confirm(confirmMessage)) return;
+
+    setDeleting(true);
     try {
-      const res = await fetch('/api/templates', {
+      const res = await fetch('/api/businesses', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: idsToDelete }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.error || 'Failed to delete companies');
+      }
+
+      alert(data.message);
+      setSelectedIds([]);
+      setSelectAll(false);
+      fetchBusinesses();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to delete companies');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Create Company handler
+  const handleCreateCompany = async () => {
+    if (!newCompany.name.trim()) {
+      alert('Company name is required');
+      return;
+    }
+
+    // Check if at least one contact has an email
+    const validContacts = newContacts.filter(c => c.email.trim());
+    if (validContacts.length === 0) {
+      alert('Please add at least one contact email');
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const res = await fetch('/api/businesses', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          category: 'SALES', // Default category for AI-generated templates
-          name: template.name,
-          description: template.description,
-          subjectTemplate: template.subjectTemplate,
-          bodyTemplate: template.bodyTemplate,
-          isActive: true,
+          name: newCompany.name,
+          website: newCompany.website,
+          industry: newCompany.industry,
+          location: newCompany.location,
+          contacts: validContacts,
+          campaignId: campaignId || undefined, // Include campaign if filtering by one
         }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Failed to save template');
+        throw new Error(data.error?.message || data.error || 'Failed to create company');
       }
 
-      // Remove saved template from generated list
-      setGeneratedTemplates(prev => prev.filter((_, i) => i !== index));
-
-      if (generatedTemplates.length === 1) {
-        setShowAiModal(false);
-        setPurpose('');
-        router.push('/dashboard/templates');
-      }
+      alert(`Company "${data.canonicalName}" created successfully with ${data.contacts?.length || 0} contact(s)`);
+      setShowCreateModal(false);
+      setNewCompany({ name: '', website: '', industry: '', location: '' });
+      setNewContacts([{ email: '', name: '', role: '' }]);
+      fetchBusinesses();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to save template');
+      alert(error instanceof Error ? error.message : 'Failed to create company');
     } finally {
-      setSavingTemplate(null);
+      setCreating(false);
     }
   };
 
-  const handleUpdateGeneratedTemplate = (index: number, field: keyof GeneratedTemplate, value: string) => {
-    setGeneratedTemplates(prev => prev.map((t, i) =>
-      i === index ? { ...t, [field]: value } : t
-    ));
+  const addContact = () => {
+    setNewContacts([...newContacts, { email: '', name: '', role: '' }]);
   };
 
-  const closeAiModal = () => {
-    if (!generating) {
-      setShowAiModal(false);
-      setGeneratedTemplates([]);
-      setAiInsights('');
-      setEditingGeneratedIdx(null);
-      setPurpose('');
+  const removeContact = (index: number) => {
+    if (newContacts.length > 1) {
+      setNewContacts(newContacts.filter((_, i) => i !== index));
     }
+  };
+
+  const updateContact = (index: number, field: string, value: string) => {
+    const updated = [...newContacts];
+    updated[index] = { ...updated[index], [field]: value };
+    setNewContacts(updated);
   };
 
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Companies</h1>
-        {selectedIds.length > 0 && (
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-bold text-gray-900">Companies</h1>
+          <CampaignFilter />
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          {selectedIds.length > 0 && (
+            <>
+              <button
+                onClick={handleGenerateEmails}
+                disabled={generatingEmails || deleting}
+                className="btn-secondary flex items-center gap-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white border-0 hover:from-purple-600 hover:to-blue-600 disabled:opacity-50"
+              >
+                {generatingEmails ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Mail className="w-4 h-4" />
+                )}
+                {generatingEmails ? 'Generating...' : `Generate Email (${selectAll ? totalCount : selectedIds.length} Selected)`}
+              </button>
+              <button
+                onClick={() => handleDeleteCompanies(selectedIds)}
+                disabled={deleting || generatingEmails}
+                className="btn-secondary flex items-center gap-2 text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400 disabled:opacity-50"
+              >
+                {deleting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Trash2 className="w-4 h-4" />
+                )}
+                {deleting ? 'Deleting...' : `Delete (${selectAll ? totalCount : selectedIds.length})`}
+              </button>
+            </>
+          )}
           <button
-            onClick={openAiModal}
-            className="btn-secondary flex items-center gap-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white border-0 hover:from-purple-600 hover:to-blue-600"
+            onClick={() => setShowCreateModal(true)}
+            className="btn-primary flex items-center gap-2"
           >
-            <Sparkles className="w-4 h-4" />
-            Generate Template ({selectAll ? totalCount : selectedIds.length} Selected)
+            <Plus className="w-4 h-4" />
+            Create Company
           </button>
-        )}
+        </div>
       </div>
 
       <div className="card mb-6">
@@ -545,6 +605,7 @@ Data Points: ${b._count.evidence}`;
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data Points</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Drafts</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -602,11 +663,24 @@ Data Points: ${b._count.evidence}`;
                       <td className="px-4 py-3 text-sm text-gray-500">
                         {format(new Date(business.createdAt), 'MMM d, yyyy')}
                       </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteCompanies([business.id]);
+                          }}
+                          disabled={deleting}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                          title="Delete company"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {businesses.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                         No companies found.
                       </td>
                     </tr>
@@ -640,234 +714,164 @@ Data Points: ${b._count.evidence}`;
         )}
       </div>
 
-      {/* AI Template Generation Modal */}
-      {showAiModal && (
+      {/* Create Company Modal */}
+      {showCreateModal && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4">
-            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={closeAiModal} />
-            <div className="relative bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-gradient-to-r from-purple-500 to-blue-500 rounded-lg">
-                      <Sparkles className="w-5 h-5 text-white" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      AI Template Generator
-                    </h3>
-                  </div>
-                  <button
-                    onClick={closeAiModal}
-                    className="text-gray-400 hover:text-gray-600"
-                    disabled={generating}
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                {/* Purpose Input Step */}
-                {generatedTemplates.length === 0 && !generating && (
-                  <div className="mb-6">
-                    <p className="text-sm text-gray-600 mb-4">
-                      Tell us what you want these email templates for. AI will analyze the {selectAll ? totalCount : selectedIds.length} selected companies and generate personalized templates.
-                    </p>
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          What do you want these templates for?
-                        </label>
-                        <textarea
-                          value={purpose}
-                          onChange={(e) => setPurpose(e.target.value)}
-                          placeholder="e.g., Cold outreach to book demos for our AI voice agent product"
-                          rows={3}
-                          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-                        />
-                      </div>
-
-                      <button
-                        onClick={generateTemplatesFromBusinesses}
-                        disabled={!purpose.trim()}
-                        className="w-full btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <Sparkles className="w-4 h-4" />
-                        Generate Templates
-                      </button>
-                    </div>
-
-                    <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                      <p className="text-sm text-blue-800 font-medium mb-2">Example purposes:</p>
-                      <ul className="text-xs text-blue-700 space-y-1">
-                        <li>- &quot;Book demos with these companies for our software&quot;</li>
-                        <li>- &quot;Follow up on previous conversations about partnership&quot;</li>
-                        <li>- &quot;Introduce our new product features&quot;</li>
-                      </ul>
-                    </div>
-                  </div>
-                )}
-
-                {/* Generating State */}
-                {generating && (
-                  <div className="flex flex-col items-center justify-center py-12">
-                    <Loader2 className="w-12 h-12 text-primary-600 animate-spin mb-4" />
-                    <p className="text-gray-600 font-medium">Analyzing {selectAll ? totalCount : selectedIds.length} companies...</p>
-                    <p className="text-sm text-gray-500 mt-1">Generating personalized templates</p>
-                  </div>
-                )}
-
-                {/* Generated Templates */}
-                {generatedTemplates.length > 0 && !generating && (
-                  <div className="space-y-6">
-                    {/* Insights */}
-                    {aiInsights && (
-                      <div className="p-4 bg-purple-50 rounded-lg">
-                        <p className="text-sm font-medium text-purple-800 mb-2">AI Insights</p>
-                        <p className="text-sm text-purple-700">{aiInsights}</p>
-                      </div>
-                    )}
-
-                    {/* Template Cards */}
-                    <div className="space-y-4">
-                      <p className="text-sm font-medium text-gray-700">
-                        Generated {generatedTemplates.length} template{generatedTemplates.length > 1 ? 's' : ''} -
-                        Review and save to use:
-                      </p>
-
-                      {generatedTemplates.map((template, idx) => (
-                        <div key={idx} className="border rounded-lg overflow-hidden">
-                          <div className="bg-gray-50 px-4 py-3 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {editingGeneratedIdx === idx ? (
-                                <input
-                                  type="text"
-                                  value={template.name}
-                                  onChange={(e) => handleUpdateGeneratedTemplate(idx, 'name', e.target.value)}
-                                  className="text-sm font-medium text-gray-900 border rounded px-2 py-1 flex-1"
-                                />
-                              ) : (
-                                <span className="text-sm font-medium text-gray-900">{template.name}</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {editingGeneratedIdx === idx ? (
-                                <button
-                                  onClick={() => setEditingGeneratedIdx(null)}
-                                  className="text-green-600 hover:text-green-800 text-sm font-medium"
-                                >
-                                  Done
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => setEditingGeneratedIdx(idx)}
-                                  className="text-blue-600 hover:text-blue-800"
-                                  title="Edit"
-                                >
-                                  <Edit2 className="w-4 h-4" />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => handleSaveGeneratedTemplate(template, idx)}
-                                disabled={savingTemplate === idx}
-                                className="btn-primary text-sm py-1 px-3 flex items-center gap-1"
-                              >
-                                {savingTemplate === idx ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Save className="w-3 h-3" />
-                                )}
-                                Save
-                              </button>
-                              <button
-                                onClick={() => setGeneratedTemplates(prev => prev.filter((_, i) => i !== idx))}
-                                className="text-red-600 hover:text-red-800"
-                                title="Discard"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="p-4 space-y-3">
-                            {editingGeneratedIdx === idx ? (
-                              <>
-                                <div>
-                                  <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
-                                  <input
-                                    type="text"
-                                    value={template.description}
-                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'description', e.target.value)}
-                                    className="w-full text-sm rounded border px-2 py-1"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-medium text-gray-500 mb-1">Subject</label>
-                                  <input
-                                    type="text"
-                                    value={template.subjectTemplate}
-                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'subjectTemplate', e.target.value)}
-                                    className="w-full text-sm rounded border px-2 py-1"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs font-medium text-gray-500 mb-1">Body</label>
-                                  <textarea
-                                    value={template.bodyTemplate}
-                                    onChange={(e) => handleUpdateGeneratedTemplate(idx, 'bodyTemplate', e.target.value)}
-                                    rows={8}
-                                    className="w-full text-sm rounded border px-2 py-1 font-mono"
-                                  />
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <p className="text-xs text-gray-500">{template.description}</p>
-                                <div className="bg-gray-50 rounded p-3">
-                                  <p className="text-xs text-gray-500 mb-1">Subject:</p>
-                                  <p className="text-sm font-medium">{template.subjectTemplate}</p>
-                                </div>
-                                <div className="bg-gray-50 rounded p-3">
-                                  <p className="text-xs text-gray-500 mb-1">Body:</p>
-                                  <pre className="text-sm whitespace-pre-wrap font-sans">{template.bodyTemplate}</pre>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Regenerate */}
-                    <div className="flex items-center justify-between pt-4 border-t">
-                      <button
-                        onClick={() => {
-                          setGeneratedTemplates([]);
-                          setAiInsights('');
-                          setPurpose('');
-                        }}
-                        className="btn-secondary"
-                      >
-                        Start Over
-                      </button>
-                      <p className="text-sm text-gray-500">
-                        {generatedTemplates.length} template{generatedTemplates.length > 1 ? 's' : ''} remaining
-                      </p>
-                    </div>
-                  </div>
-                )}
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" onClick={() => setShowCreateModal(false)} />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between p-4 border-b sticky top-0 bg-white z-10">
+                <h3 className="text-lg font-semibold">Create Company</h3>
+                <button onClick={() => setShowCreateModal(false)} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
+                </button>
               </div>
 
-              {!generating && generatedTemplates.length === 0 && (
-                <div className="bg-gray-50 px-6 py-3 flex justify-end">
-                  <button onClick={closeAiModal} className="btn-secondary">
-                    Cancel
-                  </button>
+              <div className="p-4 space-y-4">
+                {/* Company Details */}
+                <div className="space-y-4">
+                  <h4 className="font-medium text-gray-900">Company Details</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Company Name <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newCompany.name}
+                        onChange={(e) => setNewCompany({ ...newCompany, name: e.target.value })}
+                        className="input"
+                        placeholder="e.g. Acme Corporation"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Website</label>
+                      <input
+                        type="text"
+                        value={newCompany.website}
+                        onChange={(e) => setNewCompany({ ...newCompany, website: e.target.value })}
+                        className="input"
+                        placeholder="e.g. www.acme.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Industry</label>
+                      <input
+                        type="text"
+                        value={newCompany.industry}
+                        onChange={(e) => setNewCompany({ ...newCompany, industry: e.target.value })}
+                        className="input"
+                        placeholder="e.g. Technology"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+                      <input
+                        type="text"
+                        value={newCompany.location}
+                        onChange={(e) => setNewCompany({ ...newCompany, location: e.target.value })}
+                        className="input"
+                        placeholder="e.g. San Francisco, CA"
+                      />
+                    </div>
+                  </div>
                 </div>
-              )}
+
+                {/* Contacts */}
+                <div className="space-y-4 pt-4 border-t">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-gray-900">
+                      Contacts <span className="text-red-500">*</span>
+                    </h4>
+                    <button
+                      onClick={addContact}
+                      className="text-sm text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Contact
+                    </button>
+                  </div>
+
+                  {newContacts.map((contact, index) => (
+                    <div key={index} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start">
+                      <div className="sm:col-span-4">
+                        <input
+                          type="email"
+                          value={contact.email}
+                          onChange={(e) => updateContact(index, 'email', e.target.value)}
+                          className="input"
+                          placeholder="Email *"
+                        />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <input
+                          type="text"
+                          value={contact.name}
+                          onChange={(e) => updateContact(index, 'name', e.target.value)}
+                          className="input"
+                          placeholder="Name"
+                        />
+                      </div>
+                      <div className="sm:col-span-3">
+                        <input
+                          type="text"
+                          value={contact.role}
+                          onChange={(e) => updateContact(index, 'role', e.target.value)}
+                          className="input"
+                          placeholder="Role"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 flex justify-end">
+                        {newContacts.length > 1 && (
+                          <button
+                            onClick={() => removeContact(index)}
+                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-gray-50 px-4 py-3 flex justify-end gap-3 sticky bottom-0">
+                <button
+                  onClick={() => setShowCreateModal(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateCompany}
+                  disabled={creating || !newCompany.name.trim()}
+                  className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                >
+                  {creating ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Building2 className="w-4 h-4" />
+                  )}
+                  {creating ? 'Creating...' : 'Create Company'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+export default function BusinessesPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-64 items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+      </div>
+    }>
+      <BusinessesPageContent />
+    </Suspense>
   );
 }

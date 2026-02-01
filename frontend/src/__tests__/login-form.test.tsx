@@ -14,7 +14,7 @@ describe('LoginForm', () => {
     render(<LoginForm onSubmit={mockOnSubmit} />);
 
     expect(screen.getByRole('heading', { name: 'Sign In' })).toBeInTheDocument();
-    expect(screen.getByText('Welcome to CallSphere Email Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Welcome to CallSphere Cold Mail Outreach')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter your email')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('Enter your password')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();

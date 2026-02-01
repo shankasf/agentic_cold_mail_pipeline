@@ -46,8 +46,19 @@ export default function BusinessDetailPage() {
   useEffect(() => {
     if (params.id) {
       fetch(`/api/businesses/${params.id}`)
-        .then((res) => res.json())
-        .then(setBusiness)
+        .then((res) => {
+          if (!res.ok) throw new Error('Business not found');
+          return res.json();
+        })
+        .then((data) => {
+          // Ensure required arrays exist to prevent crashes
+          setBusiness({
+            ...data,
+            contacts: data.contacts || [],
+            evidence: data.evidence || [],
+            emailDrafts: data.emailDrafts || [],
+          });
+        })
         .catch(console.error)
         .finally(() => setLoading(false));
     }
@@ -130,7 +141,7 @@ export default function BusinessDetailPage() {
                     </div>
                     <p className="font-medium text-gray-900 mb-2">{ev.extractedValue}</p>
                     <p className="text-sm text-gray-500 line-clamp-2">
-                      Source ({ev.upload.filename}): {ev.chunk.textContent.substring(0, 200)}...
+                      Source ({ev.upload?.filename || 'Unknown'}): {ev.chunk?.textContent?.substring(0, 200) || 'N/A'}...
                     </p>
                   </div>
                 ))}

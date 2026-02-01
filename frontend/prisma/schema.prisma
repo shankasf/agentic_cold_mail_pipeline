@@ -25,6 +25,19 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
+  // Relations - owned resources
+  sesIdentities       SESIdentity[]
+  sequences           Sequence[]
+  uploads             Upload[]
+  businesses          Business[]
+  campaigns           Campaign[]
+  leads               Lead[]
+  emailDrafts         EmailDraft[]
+  emailExports        EmailExport[]
+  templateUploads     TemplateUpload[]
+  templateFileUploads TemplateFileUpload[]
+  emailTemplates      EmailTemplate[]
+
   @@map("users")
 }
 
@@ -103,9 +116,67 @@ enum PipelineType {
   TEMPLATE
 }
 
+// Campaign status enum
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+// SES Identity status enum
+enum SESIdentityStatus {
+  PENDING      // Verification email sent, awaiting confirmation
+  VERIFIED     // Identity verified and ready to use
+  WARMING      // In warmup phase, volume limited
+  ACTIVE       // Fully active, no restrictions
+  PAUSED       // Temporarily disabled by user
+  ERROR        // Verification failed or other error
+}
+
+// SES Identity type enum
+enum IdentityType {
+  EMAIL        // Individual email address
+  DOMAIN       // Domain identity (e.g., @callsphere.tech)
+}
+
+// Sequence status enum
+enum SequenceStatus {
+  DRAFT        // Being edited
+  ACTIVE       // Running and sending
+  PAUSED       // Temporarily stopped
+  COMPLETED    // All leads processed
+  ARCHIVED     // No longer in use
+}
+
+// Campaign model - organizes businesses and outreach efforts
+model Campaign {
+  id          String         @id @default(uuid())
+  userId      String         @map("user_id")
+  name        String
+  description String?
+  status      CampaignStatus @default(DRAFT)
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businesses  Business[]
+  uploads     Upload[]
+  leads       Lead[]
+  leadColumns LeadColumn[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("campaigns")
+}
+
 // Uploads table
 model Upload {
   id           String       @id @default(uuid())
+  userId       String?      @map("user_id")
+  campaignId   String?      @map("campaign_id")
   filename     String
   fileType     String       @map("file_type")
   sizeBytes    Int          @map("size_bytes")
@@ -115,9 +186,13 @@ model Upload {
   progressText String?      @map("progress_text")
   errorText    String?      @map("error_text")
 
+  user     User?             @relation(fields: [userId], references: [id])
+  campaign Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   chunks   ParsedChunk[]
   evidence BusinessEvidence[]
 
+  @@index([userId])
+  @@index([campaignId])
   @@map("uploads")
 }
 
@@ -141,6 +216,8 @@ model ParsedChunk {
 // Businesses table
 model Business {
   id            String   @id @default(uuid())
+  userId        String?  @map("user_id")
+  campaignId    String?  @map("campaign_id")
   canonicalName String   @unique @map("canonical_name")
   website       String?
   industryGuess String?  @map("industry_guess")
@@ -148,11 +225,17 @@ model Business {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  contacts     Contact[]
-  evidence     BusinessEvidence[]
-  observations IndustryObservation[]
-  emailDrafts  EmailDraft[]
+  user          User?                 @relation(fields: [userId], references: [id])
+  campaign      Campaign?             @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  contacts      Contact[]
+  evidence      BusinessEvidence[]
+  observations  IndustryObservation[]
+  emailDrafts   EmailDraft[]
+  sequenceLeads SequenceLead[]
+  inboundEmails InboundEmail[]
 
+  @@index([userId])
+  @@index([campaignId])
   @@index([industryGuess])
   @@index([location])
   @@index([createdAt])
@@ -169,8 +252,10 @@ model Contact {
   sourceConfidence Int      @default(0) @map("source_confidence")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  emailDrafts EmailDraft[]
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  emailDrafts   EmailDraft[]
+  sequenceLeads SequenceLead[]
+  inboundEmails InboundEmail[]
 
   @@index([businessId])
   @@index([createdAt])
@@ -232,6 +317,7 @@ model IndustryObservation {
 // Email drafts table
 model EmailDraft {
   id                    String       @id @default(uuid())
+  userId                String?      @map("user_id")
   businessId            String       @map("business_id")
   contactId             String       @map("contact_id")
   fromName              String       @default("CallSphere") @map("from_name")
@@ -249,31 +335,44 @@ model EmailDraft {
   parentEmailId         String?      @map("parent_email_id") // For follow-up emails (thread)
   threadId              String?      @map("thread_id") // Groups emails in same conversation
   sentAt                DateTime?    @map("sent_at") // When email was actually sent
+  // SES tracking fields
+  sesIdentityId         String?      @map("ses_identity_id")
+  sesMessageId          String?      @unique @map("ses_message_id") // For tracking SES events & replies
+  // Timestamps
   createdAt             DateTime     @default(now()) @map("created_at")
   updatedAt             DateTime     @updatedAt @map("updated_at")
 
-  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  contact     Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  events      EmailEvent[]
-  parentEmail EmailDraft?   @relation("EmailThread", fields: [parentEmailId], references: [id])
-  replies     EmailDraft[]  @relation("EmailThread")
+  user          User?          @relation(fields: [userId], references: [id])
+  business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  contact       Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  sesIdentity   SESIdentity?   @relation(fields: [sesIdentityId], references: [id])
+  events        EmailEvent[]
+  parentEmail   EmailDraft?    @relation("EmailThread", fields: [parentEmailId], references: [id])
+  replies       EmailDraft[]   @relation("EmailThread")
+  inboundReplies InboundEmail[]
 
+  @@index([userId])
   @@index([businessId])
   @@index([contactId])
   @@index([status])
   @@index([createdAt])
   @@index([threadId])
+  @@index([sesIdentityId])
   @@map("email_drafts")
 }
 
 // Email exports table
 model EmailExport {
   id         String     @id @default(uuid())
+  userId     String?    @map("user_id")
   exportType ExportType @map("export_type")
   filters    Json
   filePath   String     @map("file_path")
   createdAt  DateTime   @default(now()) @map("created_at")
 
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
   @@map("email_exports")
 }
 
@@ -319,12 +418,217 @@ model AdminSettings {
 }
 
 // =============================================================================
+// SES IDENTITY MANAGEMENT & WARMUP
+// =============================================================================
+
+// SES Identity model for multi-sender management
+model SESIdentity {
+  id              String            @id @default(uuid())
+  userId          String            @map("user_id")
+  emailAddress    String            @unique @map("email_address")
+  displayName     String?           @map("display_name")
+  identityType    IdentityType      @default(EMAIL) @map("identity_type")
+  // SES-specific tracking
+  sesIdentityArn  String?           @map("ses_identity_arn")
+  configSetName   String?           @map("config_set_name")
+  // Status and warmup
+  status          SESIdentityStatus @default(PENDING)
+  warmupEnabled   Boolean           @default(false) @map("warmup_enabled")
+  warmupDay       Int               @default(0) @map("warmup_day")
+  dailyLimit      Int               @default(50) @map("daily_limit")
+  sentToday       Int               @default(0) @map("sent_today")
+  lastSentAt      DateTime?         @map("last_sent_at")
+  // Reputation tracking
+  bounceRate      Float             @default(0) @map("bounce_rate")
+  complaintRate   Float             @default(0) @map("complaint_rate")
+  // Timestamps
+  verifiedAt      DateTime?         @map("verified_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailDrafts   EmailDraft[]
+  sequences     Sequence[]
+  inboundEmails InboundEmail[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("ses_identities")
+}
+
+// =============================================================================
+// MULTI-STEP SEQUENCES (CAMPAIGN AUTOMATION)
+// =============================================================================
+
+// Email sequence/campaign
+model Sequence {
+  id            String         @id @default(uuid())
+  userId        String         @map("user_id")
+  name          String
+  description   String?
+  status        SequenceStatus @default(DRAFT)
+  // Settings
+  sesIdentityId String?        @map("ses_identity_id")
+  timezone      String         @default("America/New_York")
+  sendingDays   Json           @default("[1,2,3,4,5]") @map("sending_days") // 0=Sun, 1=Mon, etc.
+  sendingHours  Json           @default("{\"start\": 9, \"end\": 17}") @map("sending_hours")
+  // Stats
+  totalLeads    Int            @default(0) @map("total_leads")
+  activeLeads   Int            @default(0) @map("active_leads")
+  completedLeads Int           @default(0) @map("completed_leads")
+  // Timestamps
+  startedAt     DateTime?      @map("started_at")
+  completedAt   DateTime?      @map("completed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sesIdentity SESIdentity?     @relation(fields: [sesIdentityId], references: [id])
+  steps       SequenceStep[]
+  leads       SequenceLead[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("sequences")
+}
+
+// Individual step in a sequence
+model SequenceStep {
+  id              String   @id @default(uuid())
+  sequenceId      String   @map("sequence_id")
+  stepNumber      Int      @map("step_number")
+  delayDays       Int      @default(1) @map("delay_days")
+  delayHours      Int      @default(0) @map("delay_hours")
+  // Email content
+  subjectTemplate String   @map("subject_template")
+  bodyTemplate    String   @map("body_template")
+  // Conditions
+  skipIfReplied   Boolean  @default(true) @map("skip_if_replied")
+  skipIfClicked   Boolean  @default(false) @map("skip_if_clicked")
+  skipIfOpened    Boolean  @default(false) @map("skip_if_opened")
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  sequence Sequence           @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  leads    SequenceLeadStep[]
+
+  @@unique([sequenceId, stepNumber])
+  @@index([sequenceId])
+  @@map("sequence_steps")
+}
+
+// Lead enrolled in a sequence
+model SequenceLead {
+  id           String    @id @default(uuid())
+  sequenceId   String    @map("sequence_id")
+  contactId    String    @map("contact_id")
+  businessId   String    @map("business_id")
+  // Progress tracking
+  currentStep  Int       @default(1) @map("current_step")
+  status       String    @default("ACTIVE") // ACTIVE, PAUSED, COMPLETED, REPLIED, BOUNCED, UNSUBSCRIBED
+  // Timestamps
+  enrolledAt   DateTime  @default(now()) @map("enrolled_at")
+  completedAt  DateTime? @map("completed_at")
+  lastActionAt DateTime? @map("last_action_at")
+
+  // Relations
+  sequence Sequence           @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  contact  Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  steps    SequenceLeadStep[]
+
+  @@unique([sequenceId, contactId])
+  @@index([sequenceId])
+  @@index([contactId])
+  @@index([status])
+  @@map("sequence_leads")
+}
+
+// Track which steps have been executed for each lead
+model SequenceLeadStep {
+  id             String    @id @default(uuid())
+  sequenceLeadId String    @map("sequence_lead_id")
+  stepId         String    @map("step_id")
+  emailDraftId   String?   @map("email_draft_id")
+  // Status
+  status         String    @default("PENDING") // PENDING, SCHEDULED, SENT, SKIPPED
+  scheduledFor   DateTime? @map("scheduled_for")
+  sentAt         DateTime? @map("sent_at")
+  skippedReason  String?   @map("skipped_reason")
+  // Timestamps
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  sequenceLead SequenceLead @relation(fields: [sequenceLeadId], references: [id], onDelete: Cascade)
+  step         SequenceStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@unique([sequenceLeadId, stepId])
+  @@index([sequenceLeadId])
+  @@index([status])
+  @@map("sequence_lead_steps")
+}
+
+// =============================================================================
+// UNIFIED INBOX (UNIBOX) - Inbound Email Tracking
+// =============================================================================
+
+// Inbound email replies received via SES
+model InboundEmail {
+  id              String   @id @default(uuid())
+  sesMessageId    String   @unique @map("ses_message_id")
+  // Sender info
+  fromEmail       String   @map("from_email")
+  fromName        String?  @map("from_name")
+  toEmail         String   @map("to_email")
+  // Content
+  subject         String
+  bodyText        String?  @map("body_text")
+  bodyHtml        String?  @map("body_html")
+  // Threading
+  inReplyTo       String?  @map("in_reply_to") // Original SES message ID
+  references      String?  // Email thread references header
+  threadId        String?  @map("thread_id")
+  // Linked records
+  originalEmailId String?  @map("original_email_id")
+  contactId       String?  @map("contact_id")
+  businessId      String?  @map("business_id")
+  sesIdentityId   String?  @map("ses_identity_id")
+  // Status
+  isRead          Boolean  @default(false) @map("is_read")
+  isArchived      Boolean  @default(false) @map("is_archived")
+  isStarred       Boolean  @default(false) @map("is_starred")
+  // Raw data
+  rawPayload      Json?    @map("raw_payload")
+  // Timestamps
+  receivedAt      DateTime @default(now()) @map("received_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  originalEmail EmailDraft?  @relation(fields: [originalEmailId], references: [id])
+  contact       Contact?     @relation(fields: [contactId], references: [id])
+  business      Business?    @relation(fields: [businessId], references: [id])
+  sesIdentity   SESIdentity? @relation(fields: [sesIdentityId], references: [id])
+
+  @@index([fromEmail])
+  @@index([threadId])
+  @@index([originalEmailId])
+  @@index([isRead])
+  @@index([receivedAt])
+  @@map("inbound_emails")
+}
+
+// =============================================================================
 // TEMPLATE PIPELINE MODELS (Non-Agentic)
 // =============================================================================
 
 // Template file uploads (txt, pdf, docx) for creating templates
 model TemplateFileUpload {
   id                String   @id @default(uuid())
+  userId            String?  @map("user_id")
   filename          String
   fileType          String   @map("file_type")
   sizeBytes         Int      @map("size_bytes")
@@ -335,14 +639,17 @@ model TemplateFileUpload {
   uploadedAt        DateTime @default(now()) @map("uploaded_at")
   createdTemplateId String?  @unique @map("created_template_id")
 
+  user            User?          @relation(fields: [userId], references: [id])
   createdTemplate EmailTemplate? @relation(fields: [createdTemplateId], references: [id])
 
+  @@index([userId])
   @@map("template_file_uploads")
 }
 
 // Email templates with variable placeholders
 model EmailTemplate {
   id              String           @id @default(uuid())
+  userId          String?          @map("user_id")
   category        TemplateCategory
   name            String           // "Sales Outreach - SaaS"
   description     String?
@@ -353,15 +660,18 @@ model EmailTemplate {
   createdAt       DateTime         @default(now()) @map("created_at")
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
+  user       User?               @relation(fields: [userId], references: [id])
   uploads    TemplateUpload[]
   sourceFile TemplateFileUpload?
 
+  @@index([userId])
   @@map("email_templates")
 }
 
 // Template CSV uploads
 model TemplateUpload {
   id           String       @id @default(uuid())
+  userId       String?      @map("user_id")
   templateId   String       @map("template_id")
   filename     String
   fileType     String       @map("file_type")
@@ -374,9 +684,11 @@ model TemplateUpload {
   errorText    String?      @map("error_text")
   uploadedAt   DateTime     @default(now()) @map("uploaded_at")
 
+  user     User?         @relation(fields: [userId], references: [id])
   template EmailTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   rows     TemplateRow[]
 
+  @@index([userId])
   @@map("template_uploads")
 }
 
@@ -401,4 +713,101 @@ model TemplateRow {
   @@index([uploadId])
   @@index([status])
   @@map("template_rows")
+}
+
+// =============================================================================
+// CAMPAIGN LEADS MANAGEMENT (Instantly-style)
+// =============================================================================
+
+// Lead status enum
+enum LeadStatus {
+  NOT_CONTACTED     // New lead, not yet contacted
+  CONTACTED         // Email sent
+  OPENED            // Email opened
+  CLICKED           // Link clicked
+  REPLIED           // Lead replied
+  INTERESTED        // Positive reply / interested
+  MEETING_BOOKED    // Meeting scheduled
+  NOT_INTERESTED    // Negative reply
+  BOUNCED           // Email bounced
+  UNSUBSCRIBED      // Lead unsubscribed
+  OUT_OF_OFFICE     // Auto-reply detected
+}
+
+// Lead model - individual prospects in a campaign
+model Lead {
+  id              String     @id @default(uuid())
+  campaignId      String     @map("campaign_id")
+  userId          String     @map("user_id")
+
+  // Core lead info
+  email           String
+  firstName       String?    @map("first_name")
+  lastName        String?    @map("last_name")
+  company         String?
+  title           String?    // Job title
+  phone           String?
+  linkedinUrl     String?    @map("linkedin_url")
+  website         String?
+  location        String?
+  industry        String?
+
+  // Email provider info (detected)
+  emailProvider   String?    @map("email_provider") // Google, Microsoft, etc.
+  emailSecurity   String?    @map("email_security") // Security gateway detected
+
+  // Status tracking
+  status          LeadStatus @default(NOT_CONTACTED)
+  lastContactedAt DateTime?  @map("last_contacted_at")
+
+  // Dynamic columns - stores custom/enriched data
+  customColumns   Json       @default("{}") @map("custom_columns") // { columnName: value }
+
+  // Enrichment tracking
+  enrichmentData  Json       @default("{}") @map("enrichment_data") // AI research results
+  lastEnrichedAt  DateTime?  @map("last_enriched_at")
+
+  // Tags for organization
+  tags            Json       @default("[]") // string[]
+
+  // Source tracking
+  source          String?    // manual, import, api, etc.
+  sourceFile      String?    @map("source_file") // Original filename if imported
+
+  // Timestamps
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  campaign        Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, email])
+  @@index([campaignId])
+  @@index([userId])
+  @@index([status])
+  @@index([email])
+  @@index([company])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+// Custom column definitions for a campaign
+model LeadColumn {
+  id          String   @id @default(uuid())
+  campaignId  String   @map("campaign_id")
+  name        String   // Column display name
+  key         String   // Column key in customColumns JSON
+  type        String   @default("text") // text, number, date, url, email, select
+  options     Json     @default("[]") // For select type: available options
+  isRequired  Boolean  @default(false) @map("is_required")
+  isEnriched  Boolean  @default(false) @map("is_enriched") // Created by AI enrichment
+  orderIndex  Int      @default(0) @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, key])
+  @@index([campaignId])
+  @@map("lead_columns")
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useMemo, useCallback, ReactNode } from 'react';
 
 type UserRole = 'ADMIN' | 'SALES_REP';
 
@@ -25,7 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me');
       const data = await res.json();
@@ -41,19 +41,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     refreshUser();
-  }, []);
+  }, [refreshUser]);
 
-  const value: AuthContextType = {
+  // Memoize derived values
+  const isAdmin = useMemo(() => user?.role === 'ADMIN', [user?.role]);
+  const isAuthenticated = useMemo(() => user !== null, [user]);
+
+  // Memoize the context value to prevent unnecessary re-renders
+  const value = useMemo<AuthContextType>(() => ({
     user,
     loading,
-    isAdmin: user?.role === 'ADMIN',
-    isAuthenticated: user !== null,
+    isAdmin,
+    isAuthenticated,
     refreshUser,
-  };
+  }), [user, loading, isAdmin, isAuthenticated, refreshUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

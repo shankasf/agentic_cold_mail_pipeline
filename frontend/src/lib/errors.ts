@@ -134,6 +134,13 @@ function isPrismaError(error: unknown): error is PrismaError {
   );
 }
 
+// User-friendly field name mappings
+const FIELD_NAME_MAP: Record<string, string> = {
+  canonical_name: 'name',
+  canonicalName: 'name',
+  email: 'email',
+};
+
 /**
  * Map Prisma errors to AppErrors
  */
@@ -144,9 +151,11 @@ export function mapPrismaError(error: PrismaError): AppError {
   switch (code) {
     // Unique constraint violation
     case 'P2002': {
-      const fields = meta?.target?.join(', ') || 'field';
+      const rawFields = meta?.target || ['field'];
+      // Map to user-friendly names
+      const friendlyFields = rawFields.map(f => FIELD_NAME_MAP[f] || f).join(', ');
       return new AppError(
-        `A record with this ${fields} already exists`,
+        `A record with this ${friendlyFields} already exists`,
         'CONFLICT',
         409,
         { field: meta?.target?.[0], cause: error }

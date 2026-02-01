@@ -6,11 +6,15 @@ import CookieConsent from '@/components/CookieConsent';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Email Campaign Manager',
-  description: 'AI-powered cold email campaign management',
+  title: {
+    default: 'CallSphere',
+    template: '%s | CallSphere',
+  },
+  description: 'AI-powered cold email outreach platform for sales teams',
   icons: {
     icon: '/icon.svg',
   },
+  keywords: ['cold email', 'outreach', 'sales', 'AI', 'email marketing'],
 };
 
 export default function RootLayout({

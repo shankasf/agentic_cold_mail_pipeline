@@ -70,8 +70,8 @@ class BusinessAnalyzerOutput(BaseModel):
 # Email Writer Agent Schemas
 class EmailWriterOutput(BaseModel):
     """Output from the Email Writer Agent."""
-    subject: str = Field(max_length=100, description="Email subject line")
-    body_text: str = Field(description="Email body, 70-110 words")
+    subject: str = Field(max_length=50, description="Email subject line, 2-4 words, lowercase")
+    body_text: str = Field(description="Email body, 100-140 words")
 
 
 # Compliance/Deliverability Agent Schemas
@@ -80,7 +80,7 @@ class ComplianceOutput(BaseModel):
     deliverability_score: int = Field(ge=0, le=100, description="Deliverability score 0-100")
     spam_flags: list[str] = Field(default_factory=list, description="List of spam concerns")
     suggestions: Optional[str] = Field(default=None, description="Optional improvement suggestions")
-    footer_text: str = Field(description="Footer with company name and address")
+    footer_text: str = Field(default="", description="Should always be empty string - no footer needed")
 
 
 # Gatekeeper Agent Schemas

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import useSWR from 'swr';
 import { fetcher, defaultSWRConfig } from '@/lib/swr';
+import { useAuth } from '@/context/AuthContext';
 import {
   PieChart,
   Pie,
@@ -36,8 +37,23 @@ import {
   CheckCircle,
   Clock,
   BarChart3,
+  Filter,
+  ChevronDown,
+  ChevronUp,
+  X,
 } from 'lucide-react';
 import { Skeleton, ErrorState } from '@/components/LoadingStates';
+
+interface Campaign {
+  id: string;
+  name: string;
+}
+
+interface User {
+  id: string;
+  name: string | null;
+  email: string;
+}
 
 interface Analytics {
   overview: {
@@ -152,15 +168,88 @@ function DashboardSkeleton() {
   );
 }
 
+const EMAIL_STATUSES = [
+  { value: '', label: 'All Statuses' },
+  { value: 'DRAFT', label: 'Draft' },
+  { value: 'NEEDS_REVIEW', label: 'Needs Review' },
+  { value: 'APPROVED', label: 'Approved' },
+  { value: 'SENT', label: 'Sent' },
+  { value: 'BOUNCED', label: 'Bounced' },
+  { value: 'COMPLAINT', label: 'Complaint' },
+];
+
 export default function DashboardPage() {
+  const { isAdmin } = useAuth();
   const [days, setDays] = useState(7);
   const [customDate, setCustomDate] = useState('');
   const [filterMode, setFilterMode] = useState<'preset' | 'custom'>('preset');
 
-  // Build URL based on filter mode
-  const apiUrl = filterMode === 'custom' && customDate
-    ? `/api/analytics?date=${customDate}`
-    : `/api/analytics?days=${days}`;
+  // Advanced filter state
+  const [showFilters, setShowFilters] = useState(false);
+  const [campaignId, setCampaignId] = useState<string>('');
+  const [userId, setUserId] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+
+  // Set page title
+  useEffect(() => {
+    document.title = 'Dashboard | CallSphere';
+  }, []);
+
+  // Fetch campaigns for filter dropdown
+  const { data: campaignsData } = useSWR<{ campaigns: Campaign[] }>(
+    '/api/campaigns?limit=100',
+    fetcher,
+    { ...defaultSWRConfig, revalidateOnFocus: false }
+  );
+
+  // Fetch users for filter dropdown (admin only)
+  const { data: usersData } = useSWR<{ users: User[] }>(
+    isAdmin ? '/api/users' : null,
+    fetcher,
+    { ...defaultSWRConfig, revalidateOnFocus: false }
+  );
+
+  // Count active filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (campaignId) count++;
+    if (userId) count++;
+    if (startDate && endDate) count++;
+    if (statusFilter) count++;
+    return count;
+  }, [campaignId, userId, startDate, endDate, statusFilter]);
+
+  // Clear all filters
+  const clearFilters = () => {
+    setCampaignId('');
+    setUserId('');
+    setStartDate('');
+    setEndDate('');
+    setStatusFilter('');
+  };
+
+  // Build API URL with all filters
+  const apiUrl = useMemo(() => {
+    const params = new URLSearchParams();
+
+    // Date range takes precedence over days preset
+    if (startDate && endDate) {
+      params.set('startDate', startDate);
+      params.set('endDate', endDate);
+    } else if (filterMode === 'custom' && customDate) {
+      params.set('date', customDate);
+    } else {
+      params.set('days', String(days));
+    }
+
+    if (campaignId) params.set('campaignId', campaignId);
+    if (userId) params.set('userId', userId);
+    if (statusFilter) params.set('status', statusFilter);
+
+    return `/api/analytics?${params.toString()}`;
+  }, [days, filterMode, customDate, startDate, endDate, campaignId, userId, statusFilter]);
 
   // Use SWR for data fetching with caching and deduplication
   const { data: analytics, error, isLoading, mutate } = useSWR<Analytics>(
@@ -207,7 +296,7 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Header with Filters */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-1">Overview of your email campaigns</p>
@@ -220,9 +309,12 @@ export default function DashboardPage() {
               onClick={() => {
                 setDays(d);
                 setFilterMode('preset');
+                // Clear date range when using preset
+                setStartDate('');
+                setEndDate('');
               }}
               className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                filterMode === 'preset' && days === d
+                filterMode === 'preset' && days === d && !startDate && !endDate
                   ? 'bg-primary-600 text-white shadow-md'
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
@@ -239,16 +331,186 @@ export default function DashboardPage() {
               onChange={(e) => {
                 setCustomDate(e.target.value);
                 setFilterMode('custom');
+                // Clear date range when using single date
+                setStartDate('');
+                setEndDate('');
               }}
               className={`px-3 py-2 rounded-lg text-sm border ${
-                filterMode === 'custom'
+                filterMode === 'custom' && !startDate && !endDate
                   ? 'border-primary-500 bg-primary-50'
                   : 'border-gray-300 bg-white'
               } focus:outline-none focus:ring-2 focus:ring-primary-500`}
             />
           </div>
+          {/* Filters Button */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+              showFilters || activeFilterCount > 0
+                ? 'bg-primary-600 text-white shadow-md'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 text-xs rounded-full bg-white text-primary-600 font-bold">
+                {activeFilterCount}
+              </span>
+            )}
+            {showFilters ? (
+              <ChevronUp className="w-4 h-4" />
+            ) : (
+              <ChevronDown className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
+
+      {/* Advanced Filters Panel */}
+      {showFilters && (
+        <div className="card mb-6 border-primary-200 bg-primary-50/30">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Filter className="w-4 h-4" />
+              Advanced Filters
+            </h3>
+            {activeFilterCount > 0 && (
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-1 text-sm text-red-600 hover:text-red-700 transition-colors"
+              >
+                <X className="w-4 h-4" />
+                Clear All
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+            {/* Campaign Filter */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Campaign</label>
+              <select
+                value={campaignId}
+                onChange={(e) => setCampaignId(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="">All Campaigns</option>
+                {campaignsData?.campaigns?.map((campaign) => (
+                  <option key={campaign.id} value={campaign.id}>
+                    {campaign.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* User Filter (Admin only) */}
+            {isAdmin && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">User</label>
+                <select
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-sm border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                >
+                  <option value="">All Users</option>
+                  {usersData?.users?.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name || user.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Status Filter */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                {EMAIL_STATUSES.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range - From */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">From Date</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className={`w-full px-3 py-2 rounded-lg text-sm border ${
+                  startDate && endDate
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-gray-300 bg-white'
+                } focus:outline-none focus:ring-2 focus:ring-primary-500`}
+              />
+            </div>
+
+            {/* Date Range - To */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">To Date</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                min={startDate}
+                className={`w-full px-3 py-2 rounded-lg text-sm border ${
+                  startDate && endDate
+                    ? 'border-primary-500 bg-primary-50'
+                    : 'border-gray-300 bg-white'
+                } focus:outline-none focus:ring-2 focus:ring-primary-500`}
+              />
+            </div>
+          </div>
+
+          {/* Active Filters Summary */}
+          {activeFilterCount > 0 && (
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="flex flex-wrap gap-2">
+                {campaignId && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-primary-100 text-primary-700">
+                    Campaign: {campaignsData?.campaigns?.find(c => c.id === campaignId)?.name || 'Selected'}
+                    <button onClick={() => setCampaignId('')} className="hover:text-primary-900">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {userId && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-primary-100 text-primary-700">
+                    User: {usersData?.users?.find(u => u.id === userId)?.name || usersData?.users?.find(u => u.id === userId)?.email || 'Selected'}
+                    <button onClick={() => setUserId('')} className="hover:text-primary-900">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {statusFilter && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-primary-100 text-primary-700">
+                    Status: {EMAIL_STATUSES.find(s => s.value === statusFilter)?.label}
+                    <button onClick={() => setStatusFilter('')} className="hover:text-primary-900">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+                {startDate && endDate && (
+                  <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-primary-100 text-primary-700">
+                    Date: {startDate} to {endDate}
+                    <button onClick={() => { setStartDate(''); setEndDate(''); }} className="hover:text-primary-900">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quick Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -358,23 +620,23 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      {/* Charts Row 1 - Status and Engagement Donut Charts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
         {/* Email Status Pie Chart */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Email Status Distribution</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Email Status</h2>
             <BarChart3 className="w-5 h-5 text-gray-400" />
           </div>
-          <div className="h-72">
+          <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={statusPieData}
                   cx="50%"
                   cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
+                  innerRadius={50}
+                  outerRadius={80}
                   paddingAngle={2}
                   dataKey="value"
                   label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
@@ -391,10 +653,10 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
           {/* Legend */}
-          <div className="flex flex-wrap justify-center gap-3 mt-4 pt-4 border-t">
+          <div className="flex flex-wrap justify-center gap-2 mt-3 pt-3 border-t">
             {statusPieData.map((entry, index) => (
-              <div key={index} className="flex items-center gap-1.5 text-sm">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: entry.color }} />
+              <div key={index} className="flex items-center gap-1 text-xs">
+                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
                 <span className="text-gray-600">{entry.name}</span>
                 <span className="font-medium text-gray-900">({entry.value})</span>
               </div>
@@ -402,13 +664,117 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Engagement Funnel */}
+        {/* Open Rate Donut Chart */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Open Rate</h2>
+            <Eye className="w-5 h-5 text-amber-500" />
+          </div>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Opened', value: analytics.engagementMetrics.uniqueOpens, color: '#f59e0b' },
+                    { name: 'Not Opened', value: Math.max(0, analytics.deliveryMetrics.delivered - analytics.engagementMetrics.uniqueOpens), color: '#e5e7eb' },
+                  ]}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={2}
+                  dataKey="value"
+                  labelLine={false}
+                >
+                  <Cell fill="#f59e0b" />
+                  <Cell fill="#e5e7eb" />
+                </Pie>
+                <Tooltip
+                  formatter={(value: number) => [value.toLocaleString(), 'Count']}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Center Stats */}
+          <div className="text-center -mt-24 mb-16 relative z-10">
+            <p className="text-3xl font-bold text-amber-600">{analytics.engagementMetrics.openRate}%</p>
+            <p className="text-xs text-gray-500">Open Rate</p>
+          </div>
+          {/* Legend */}
+          <div className="flex justify-center gap-4 pt-3 border-t">
+            <div className="flex items-center gap-1.5 text-sm">
+              <div className="w-3 h-3 rounded-full bg-amber-500" />
+              <span className="text-gray-600">Opened</span>
+              <span className="font-medium text-gray-900">({analytics.engagementMetrics.uniqueOpens})</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-sm">
+              <div className="w-3 h-3 rounded-full bg-gray-200" />
+              <span className="text-gray-600">Not Opened</span>
+              <span className="font-medium text-gray-900">({Math.max(0, analytics.deliveryMetrics.delivered - analytics.engagementMetrics.uniqueOpens)})</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Click Rate Donut Chart */}
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Click Rate</h2>
+            <MousePointer className="w-5 h-5 text-purple-500" />
+          </div>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: 'Clicked', value: analytics.engagementMetrics.uniqueClicks, color: '#8b5cf6' },
+                    { name: 'Not Clicked', value: Math.max(0, analytics.engagementMetrics.uniqueOpens - analytics.engagementMetrics.uniqueClicks), color: '#e5e7eb' },
+                  ]}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={2}
+                  dataKey="value"
+                  labelLine={false}
+                >
+                  <Cell fill="#8b5cf6" />
+                  <Cell fill="#e5e7eb" />
+                </Pie>
+                <Tooltip
+                  formatter={(value: number) => [value.toLocaleString(), 'Count']}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Center Stats */}
+          <div className="text-center -mt-24 mb-16 relative z-10">
+            <p className="text-3xl font-bold text-purple-600">{analytics.engagementMetrics.clickThroughRate}%</p>
+            <p className="text-xs text-gray-500">Click-Through Rate</p>
+          </div>
+          {/* Legend */}
+          <div className="flex justify-center gap-4 pt-3 border-t">
+            <div className="flex items-center gap-1.5 text-sm">
+              <div className="w-3 h-3 rounded-full bg-purple-500" />
+              <span className="text-gray-600">Clicked</span>
+              <span className="font-medium text-gray-900">({analytics.engagementMetrics.uniqueClicks})</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-sm">
+              <div className="w-3 h-3 rounded-full bg-gray-200" />
+              <span className="text-gray-600">Not Clicked</span>
+              <span className="font-medium text-gray-900">({Math.max(0, analytics.engagementMetrics.uniqueOpens - analytics.engagementMetrics.uniqueClicks)})</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Engagement Funnel */}
+      <div className="grid grid-cols-1 gap-6 mb-6">
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Engagement Funnel</h2>
             <TrendingUp className="w-5 h-5 text-gray-400" />
           </div>
-          <div className="h-72">
+          <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={engagementFunnelData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
@@ -424,18 +790,22 @@ export default function DashboardPage() {
             </ResponsiveContainer>
           </div>
           {/* Conversion Rates */}
-          <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t">
+          <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t">
+            <div className="text-center">
+              <p className="text-lg font-bold text-blue-600">{analytics.deliveryMetrics.sent.toLocaleString()}</p>
+              <p className="text-xs text-gray-500">Sent</p>
+            </div>
             <div className="text-center">
               <p className="text-lg font-bold text-green-600">{analytics.deliveryMetrics.deliveryRate}%</p>
-              <p className="text-xs text-gray-500">Delivery</p>
+              <p className="text-xs text-gray-500">Delivered</p>
             </div>
             <div className="text-center">
               <p className="text-lg font-bold text-amber-600">{analytics.engagementMetrics.openRate}%</p>
-              <p className="text-xs text-gray-500">Open</p>
+              <p className="text-xs text-gray-500">Opened</p>
             </div>
             <div className="text-center">
               <p className="text-lg font-bold text-purple-600">{analytics.engagementMetrics.clickThroughRate}%</p>
-              <p className="text-xs text-gray-500">CTR</p>
+              <p className="text-xs text-gray-500">Clicked</p>
             </div>
           </div>
         </div>

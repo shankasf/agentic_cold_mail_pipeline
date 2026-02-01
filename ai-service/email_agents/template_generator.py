@@ -1,19 +1,18 @@
 """
 Template Generator Agent
-Generates professional email templates from business information in uploaded files.
-Ensures templates pass spam filters and are ready for personalization.
+Generates professional email templates for bulk personalization.
+Follows strict formatting rules - no links, plain text only.
 """
 from agents import Agent
 from pydantic import BaseModel, Field
-from typing import Optional
 import config
 
 
 class GeneratedTemplate(BaseModel):
     """A generated email template."""
     name: str = Field(description="Descriptive name for this template")
-    subject_template: str = Field(description="Email subject with {{variables}} for personalization")
-    body_template: str = Field(description="Complete email body including signature. MUST end with: Best regards,\\nSagar Shankaran\\nFounder, Callsphere")
+    subject_template: str = Field(description="Email subject with {{variables}} - 2-4 words, lowercase, no questions")
+    body_template: str = Field(description="Complete email body with {{variables}}. 100-140 words. Must end with: Best,\\n" + config.SENDER_NAME)
     description: str = Field(description="Brief description of when to use this template")
 
 
@@ -23,66 +22,68 @@ class TemplateGeneratorOutput(BaseModel):
     insights: str = Field(description="Brief explanation of the approach taken")
 
 
-CALENDLY_LINK = "https://calendly.com/sagar-callsphere/new-meeting"
+INSTRUCTIONS = f"""You are an expert email template creator for cold outreach.
+Create templates that sound like a founder thinking out loud, not a salesperson.
 
-INSTRUCTIONS = f"""You are an expert email marketing copywriter specializing in B2B outreach. Your task is to generate ONE professional email template based on the user's stated PURPOSE.
+=== AVAILABLE VARIABLES ===
+- {{{{first_name}}}} - Contact's first name (use in greeting)
+- {{{{company}}}} - Company name
+- {{{{industry}}}} - Industry type
+- {{{{role}}}} - Contact's job role
+- {{{{pain_theme}}}} - Industry-specific pain point (provided at send time)
 
-1. PASS SPAM FILTERS - Critical requirements:
-   - NO spammy phrases: "act now", "limited time", "don't miss", "guaranteed", "free", "urgent"
-   - NO excessive punctuation (multiple exclamation points)
-   - NO ALL CAPS words
-   - Professional, conversational tone
-   - Clear value proposition without being salesy
+=== SUBJECT LINE RULES ===
+- 2-4 words only
+- All lowercase
+- Sounds neutral/internal, like a teammate note
+- NEVER a question
+- NEVER outcome-obvious
 
-2. USE PERSONALIZATION VARIABLES:
-   - {{{{first_name}}}} - Contact's first name (use this for greeting, e.g., "Hi {{{{first_name}}}},")
-   - {{{{company}}}} - Company name
-   - {{{{industry}}}} - Industry type
-   - {{{{role}}}} - Contact's job role
+GOOD: "manual reply math", "overnight sales", "{{{{industry}}}} ops"
+BAD: "Quick question?", "AI for your business", "Boost revenue"
 
-3. FOLLOW EMAIL BEST PRACTICES:
-   - Subject: 5-10 words, personalized, curiosity-driven (no spam triggers)
-   - Body: 70-110 words (not counting signature)
-   - ALWAYS end with a call-to-action asking to book a call with this exact link: {CALENDLY_LINK}
-   - Include phrase like "book a quick call" or "schedule a brief chat" near the CTA
-   - ALWAYS end with this exact signature block:
+=== BODY STRUCTURE (100-140 words) ===
 
-     Best regards,
-     Sagar Shankaran
-     Founder, Callsphere
+1. GREETING: "Hi {{{{first_name}}}},"
 
-4. ALIGN WITH USER'S PURPOSE:
-   - Focus the template content on achieving the user's stated goal
-   - Use appropriate tone and messaging for the purpose
-   - Tailor the call-to-action to match the objective
+2. OPENING (1 line): Founder thinking out loud
+   NEVER: "Quick question:", "I came across", "I noticed you"
 
-5. USE CONTEXT INSIGHTS (if provided):
-   - Extract key business pain points from any context
-   - Identify industry-specific language and terminology
-   - Tailor value propositions to the context
+3. PROBLEM (2-4 short sentences):
+   - Use {{{{pain_theme}}}} to make it specific
+   - Paint a scene they recognize
+   - One idea per sentence
+   - Short sentences only
 
-Generate exactly ONE template that best achieves the user's purpose.
+4. PRODUCT INTRO (2-3 sentences):
+   - "Custom AI voice and chat agent designed for your business"
+   - Max 2 supporting features, woven in naturally
+   - NEVER list features
 
-GOOD SUBJECT EXAMPLES:
-- "Quick question about {{{{company}}}}'s customer support"
-- "Idea for {{{{company}}}}'s {{{{industry}}}} operations"
-- "{{{{first_name}}}}, saw your recent expansion news"
+5. SETUP LINE: "Takes about 5 minutes to set up." (exactly once)
 
-BAD SUBJECT EXAMPLES (AVOID):
-- "URGENT: Don't miss this opportunity!!!"
-- "FREE consultation - Limited time only"
-- "You won't believe what we can do"
+6. CTA (1 question):
+   GOOD: "Want to see how it handles {{{{pain_theme}}}}?"
+   BAD: "Happy to share if helpful", "Let me know if interested"
 
-REQUIRED CTA FORMAT (use at end of body before signature):
-Would love to chat - here's my calendar: {CALENDLY_LINK}
+7. SIGNATURE:
+Best,
+{config.SENDER_NAME}
 
-CRITICAL: The body_template output MUST include the complete signature at the very end:
+=== CRITICAL RULES ===
+- NO LINKS OR URLs - plain text only
+- NO em dashes (—)
+- Short sentences only
+- 100-140 words for body
+- Sound like a founder, not a marketer
 
-Best regards,
-Sagar Shankaran
-Founder, Callsphere
-
-DO NOT omit the signature. Every email body MUST end with these exact 3 lines.
+=== AVOID THESE PHRASES ===
+- "I came across {{{{company}}}}"
+- "I noticed you're part of"
+- "Quick question"
+- "Happy to share if helpful"
+- "Let me know if interested"
+- "If it makes sense"
 """
 
 template_generator_agent = Agent(
@@ -135,21 +136,20 @@ PURPOSE: {purpose}
 {context}
 {document_section}
 
-Create a single template that best achieves this purpose. The template MUST:
-1. Be aligned with the stated purpose
-2. Use personalization variables: {{{{first_name}}}} for greeting, {{{{company}}}}, {{{{industry}}}}, {{{{role}}}}
-3. Be 70-110 words (body only, not counting signature)
-4. Include a CTA asking to book a call with this exact link: {CALENDLY_LINK}
-5. Pass all spam filter checks
-6. Be professional yet conversational
+Create a template that:
+1. Uses variables: {{{{first_name}}}}, {{{{company}}}}, {{{{industry}}}}, {{{{pain_theme}}}}
+2. Subject: 2-4 words, lowercase, NOT a question
+3. Body: 100-140 words
+4. NO LINKS - plain text only
+5. NO em dashes
+6. Mentions "5-minute setup" exactly once
+7. CTA is a question tied to the angle (not "happy to share")
+8. Sounds like a founder thinking out loud
 
-CRITICAL - The body_template MUST end with this EXACT signature (include these 3 lines at the very end):
+CRITICAL - The body_template MUST end with:
 
-Best regards,
-Sagar Shankaran
-Founder, Callsphere
-
-DO NOT forget the signature. It is REQUIRED.
+Best,
+{config.SENDER_NAME}
 
 Also provide a brief insight about the approach taken."""
 

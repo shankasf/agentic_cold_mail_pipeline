@@ -48,6 +48,7 @@ export default function EmailDetailPage() {
   const [editSubject, setEditSubject] = useState('');
   const [editBody, setEditBody] = useState('');
   const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     const fetchEmail = async () => {
@@ -129,6 +130,35 @@ export default function EmailDetailPage() {
       router.push('/dashboard/emails');
     } catch (error) {
       alert('Failed to delete email');
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!email) return;
+    setSending(true);
+    try {
+      const res = await fetch('/api/emails/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emailIds: [email.id] }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error?.message || data.error || 'Failed to send email');
+      }
+
+      if (data.queued > 0) {
+        alert('Email queued for sending!');
+        setEmail({ ...email, status: 'SENT' });
+      } else if (data.failed > 0 && data.errors?.length > 0) {
+        throw new Error(data.errors[0]);
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to send email');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -237,7 +267,7 @@ export default function EmailDetailPage() {
             <h2 className="text-lg font-semibold mb-4">Evidence Used</h2>
             {(email.business.evidence?.length ?? 0) > 0 ? (
               <div className="space-y-4">
-                {email.business.evidence!.slice(0, 5).map((ev, idx) => (
+                {email.business.evidence?.slice(0, 5).map((ev, idx) => (
                   <div key={idx} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="badge-info text-xs">{ev.evidenceType.replace('_', ' ')}</span>
@@ -245,7 +275,7 @@ export default function EmailDetailPage() {
                     </div>
                     <p className="font-medium text-gray-900 mb-2">{ev.extractedValue}</p>
                     <p className="text-sm text-gray-500 line-clamp-2">
-                      Source: {ev.chunk.textContent.substring(0, 200)}...
+                      Source: {ev.chunk?.textContent?.substring(0, 200) || 'N/A'}...
                     </p>
                   </div>
                 ))}
@@ -276,8 +306,17 @@ export default function EmailDetailPage() {
             </div>
 
             <div className="space-y-2">
+              {!['SENT', 'BOUNCED', 'COMPLAINT'].includes(email.status) && (
+                <button
+                  onClick={handleSendEmail}
+                  disabled={sending}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  <Send className="w-4 h-4" /> {sending ? 'Sending...' : 'Send Now'}
+                </button>
+              )}
               {['DRAFT', 'NEEDS_REVIEW'].includes(email.status) && (
-                <button onClick={handleApprove} className="btn-primary w-full flex items-center justify-center gap-2">
+                <button onClick={handleApprove} className="btn-secondary w-full flex items-center justify-center gap-2">
                   <CheckCircle className="w-4 h-4" /> Approve
                 </button>
               )}
