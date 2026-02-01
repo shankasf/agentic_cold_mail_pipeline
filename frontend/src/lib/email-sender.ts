@@ -537,6 +537,36 @@ function generateHtmlEmail(bodyText: string, footerText: string, senderName: str
 </html>`.trim();
 }
 
+/**
+ * Wrap links in HTML with click tracking URLs
+ * Excludes mailto:, tel:, and unsubscribe links
+ */
+function wrapLinksWithTracking(html: string, emailDraftId: string): string {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://marketing.callsphere.tech';
+
+  // Match href="..." in anchor tags, excluding mailto:, tel:, and already-wrapped links
+  const linkRegex = /(<a\s+[^>]*href=["'])([^"']+)(["'][^>]*>)/gi;
+
+  return html.replace(linkRegex, (match, prefix, url, suffix) => {
+    // Skip tracking for these URL types
+    if (
+      url.startsWith('mailto:') ||
+      url.startsWith('tel:') ||
+      url.includes('unsubscribe') ||
+      url.includes('/api/track/') ||  // Already tracked
+      url.startsWith('#')
+    ) {
+      return match;
+    }
+
+    // Create tracking URL
+    const encodedUrl = encodeURIComponent(url);
+    const trackingUrl = `${baseUrl}/api/track/click/${emailDraftId}?url=${encodedUrl}`;
+
+    return `${prefix}${trackingUrl}${suffix}`;
+  });
+}
+
 // Create SMTP transporter
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'email-smtp.us-east-1.amazonaws.com',
@@ -687,7 +717,10 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
     const fullBody = email.footerText ? `${email.bodyText}\n\n${email.footerText}` : email.bodyText;
 
     // Generate HTML version of the email (pass empty string for footer to avoid any address)
-    const htmlBody = generateHtmlEmail(email.bodyText, '', email.fromName);
+    let htmlBody = generateHtmlEmail(email.bodyText, '', email.fromName);
+
+    // Wrap links with click tracking URLs
+    htmlBody = wrapLinksWithTracking(htmlBody, emailDraftId);
 
     // Pre-send validation
     const validation = validateEmail({
