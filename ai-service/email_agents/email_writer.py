@@ -130,12 +130,33 @@ email_writer_agent = Agent(
 )
 
 
+def format_custom_data(custom_data: dict | None) -> str:
+    """Format custom data fields into a readable context section."""
+    if not custom_data or not isinstance(custom_data, dict):
+        return ""
+
+    # Filter out empty values and format nicely
+    items = []
+    for key, value in custom_data.items():
+        if value and str(value).strip():
+            # Convert snake_case to Title Case for display
+            display_key = key.replace('_', ' ').title()
+            items.append(f"- {display_key}: {value}")
+
+    if not items:
+        return ""
+
+    return "\n".join(items)
+
+
 async def write_email(
     business: dict,
     contact: dict,
     facts_used: list[dict],
     pain_point: str | None = None,
-    industry_playbook: dict | None = None
+    industry_playbook: dict | None = None,
+    custom_business_data: dict | None = None,
+    custom_contact_data: dict | None = None,
 ) -> EmailWriterOutput:
     """
     Generate a cold email for a business/contact.
@@ -146,6 +167,8 @@ async def write_email(
         facts_used: List of {type, value, chunk_id, confidence}
         pain_point: Optional inferred pain point
         industry_playbook: Optional playbook for the industry
+        custom_business_data: ALL extra columns from import (for AI to scan and use)
+        custom_contact_data: ALL extra contact columns from import
 
     Returns:
         EmailWriterOutput with subject and body_text
@@ -158,11 +181,11 @@ async def write_email(
     business_name = business.get('canonical_name', 'your company')
     industry = business.get('industry_guess', 'Unknown')
 
-    # Format facts
+    # Format facts from evidence
     facts_text = "\n".join([
         f"- {f['type']}: {f['value']} (confidence: {f['confidence']}%)"
         for f in facts_used
-    ]) if facts_used else "No specific facts available"
+    ]) if facts_used else "No specific facts from evidence"
 
     # Extract platforms/tools from facts
     platforms = [f['value'] for f in facts_used if f['type'].lower() in ['tools', 'platform', 'software', 'crm', 'services']]
@@ -182,6 +205,33 @@ async def write_email(
     if business.get('location'):
         location_context = f"\n- Location: {business.get('location')}"
 
+    # Format ALL custom data from import (could be 50+ columns)
+    custom_business_text = format_custom_data(custom_business_data)
+    custom_contact_text = format_custom_data(custom_contact_data)
+
+    # Build additional context section
+    additional_context = ""
+    if custom_business_text or custom_contact_text:
+        additional_context = "\n\n=== ADDITIONAL DATA FROM IMPORT (scan for useful personalization hooks) ==="
+        if custom_business_text:
+            additional_context += f"\n\nCompany Data:\n{custom_business_text}"
+        if custom_contact_text:
+            additional_context += f"\n\nContact Data:\n{custom_contact_text}"
+        additional_context += "\n\nSCAN the above data for ANY useful personalization hooks like: revenue, employee count, funding, tech stack, recent news, awards, pain points, interests, etc. Use what's relevant to create a more personalized email."
+
+    # Industry knowledge prompt when data is sparse
+    ai_knowledge_prompt = ""
+    if not facts_used and not custom_business_text:
+        ai_knowledge_prompt = f"""
+
+=== USE YOUR KNOWLEDGE ===
+Since no specific company data is available, use your general knowledge about:
+- Typical pain points for {industry} companies
+- Common challenges businesses like {business_name} face
+- Industry trends and patterns that would resonate
+
+Create a relevant, helpful email based on industry best practices."""
+
     prompt = f"""Write a cold email following the exact structure and rules.
 
 === RECIPIENT ===
@@ -189,10 +239,10 @@ async def write_email(
 - Company: {business_name}
 - Industry: {industry}{role_context}{location_context}
 
-=== FACTS FROM BUSINESS ANALYZER (use these for personalization) ===
+=== FACTS FROM BUSINESS ANALYZER (primary personalization) ===
 {facts_text}
 {platforms_text}
-{pain_text}
+{pain_text}{additional_context}{ai_knowledge_prompt}
 
 === OPENING STYLE FOR THIS EMAIL ===
 Use a "{opening_type}" style opening.
@@ -209,7 +259,7 @@ Use a "{opening_type}" style opening.
 2. BODY (100-140 words):
    - Greeting: "Hi {first_name},"
    - Opening: Use "{opening_type}" style (1 line, founder thinking out loud)
-   - Problem: 2-4 short sentences using the facts above
+   - Problem: 2-4 short sentences using facts and any relevant custom data above
    - Product intro: Connect to problem, mention "custom AI voice and chat agent"
    - Setup line: Mention "5-minute setup" exactly once
    - CTA: One question tied to the angle (not "happy to share" or "let me know")
@@ -221,7 +271,8 @@ Use a "{opening_type}" style opening.
 - NO "Quick question:"
 - Only mention platforms if listed above
 - Short sentences only
-- 100-140 words for body"""
+- 100-140 words for body
+- USE any relevant custom data to make the email more personalized"""
 
     result = await Runner.run(email_writer_agent, prompt)
     return result.final_output_as(EmailWriterOutput)

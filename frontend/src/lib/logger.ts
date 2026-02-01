@@ -111,6 +111,22 @@ function createLogEntry(
   return entry;
 }
 
+// Redis publishing for real-time log streaming
+const LOGS_CHANNEL = 'service:logs';
+
+async function publishToRedis(entry: LogEntry): Promise<void> {
+  try {
+    const { redisPub } = await import('@/lib/redis');
+    const redis = redisPub();
+    await redis.publish(LOGS_CHANNEL, JSON.stringify({
+      ...entry,
+      metadata: entry.context,
+    }));
+  } catch {
+    // Silently fail - don't break logging if Redis is unavailable
+  }
+}
+
 function writeLog(entry: LogEntry): void {
   const output = JSON.stringify(entry);
 
@@ -124,6 +140,9 @@ function writeLog(entry: LogEntry): void {
     default:
       console.log(output);
   }
+
+  // Also publish to Redis for real-time streaming (fire and forget)
+  publishToRedis(entry).catch(() => {});
 }
 
 /**

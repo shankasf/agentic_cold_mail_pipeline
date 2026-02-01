@@ -64,7 +64,11 @@ export async function GET(request: NextRequest) {
         clearInterval(heartbeatInterval);
         redisSub.off('message', messageHandler);
         await redisSub.unsubscribe(EMAIL_EVENTS_CHANNEL);
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // Controller already closed, ignore
+        }
       });
     },
   });

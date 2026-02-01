@@ -168,6 +168,41 @@ class GenerateFollowUpResponse(BaseModel):
     sequence_number: int = 2
 
 
+# Bulk email generation request/response
+class BulkContactItem(BaseModel):
+    business: dict
+    contact: dict
+    evidence: list[dict] | None = None
+    industry_playbook: dict | None = None
+
+
+class BulkGenerateRequest(BaseModel):
+    contacts: list[BulkContactItem]
+    concurrency: int = 10  # Default parallel workers
+
+
+class BulkGenerateResultItem(BaseModel):
+    success: bool
+    business_id: str | None = None
+    contact_id: str | None = None
+    subject: str | None = None
+    body_text: str | None = None
+    footer_text: str | None = None
+    personalization_tokens: dict | None = None
+    confidence_score: int | None = None
+    deliverability_score: int | None = None
+    spam_flags: list[str] | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class BulkGenerateResponse(BaseModel):
+    results: list[BulkGenerateResultItem]
+    total: int
+    successful: int
+    failed: int
+
+
 class GeneratedTemplateItem(BaseModel):
     name: str
     subjectTemplate: str
@@ -409,6 +444,79 @@ async def generate_follow_up_endpoint(request: GenerateFollowUpRequest):
             status_code=500,
             detail=f"Follow-up generation error: {str(e)}"
         )
+
+
+# Bulk generate emails with parallel processing
+@app.post("/generate-emails-bulk", response_model=BulkGenerateResponse)
+async def generate_emails_bulk(request: BulkGenerateRequest):
+    """
+    Generate emails for multiple contacts in parallel using semaphore-bounded concurrency.
+    Optimized for bulk operations - processes all contacts concurrently (bounded by concurrency limit).
+    """
+    import asyncio
+
+    if not request.contacts:
+        raise HTTPException(status_code=400, detail="No contacts provided")
+
+    # Limit concurrency to reasonable bounds
+    concurrency = min(max(1, request.concurrency), 50)  # Between 1-50
+    semaphore = asyncio.Semaphore(concurrency)
+
+    print(f"[Bulk Generate] Starting bulk generation for {len(request.contacts)} contacts with concurrency={concurrency}")
+
+    async def generate_with_semaphore(item: BulkContactItem, index: int) -> BulkGenerateResultItem:
+        """Process a single contact with semaphore-bounded concurrency."""
+        async with semaphore:
+            try:
+                result = await generate_email_for_contact(
+                    business=item.business,
+                    contact=item.contact,
+                    evidence=item.evidence,
+                    industry_playbook=item.industry_playbook,
+                )
+
+                return BulkGenerateResultItem(
+                    success=result.get('success', False),
+                    business_id=result.get('business_id'),
+                    contact_id=result.get('contact_id'),
+                    subject=result.get('subject'),
+                    body_text=result.get('body_text'),
+                    footer_text=result.get('footer_text'),
+                    personalization_tokens=result.get('personalization_tokens'),
+                    confidence_score=result.get('confidence_score'),
+                    deliverability_score=result.get('deliverability_score'),
+                    spam_flags=result.get('spam_flags'),
+                    status=result.get('status'),
+                    error=result.get('error'),
+                )
+            except Exception as e:
+                print(f"[Bulk Generate] Error processing contact {index}: {str(e)}")
+                return BulkGenerateResultItem(
+                    success=False,
+                    business_id=item.business.get('id'),
+                    contact_id=item.contact.get('id', item.contact.get('email')),
+                    error=str(e),
+                )
+
+    # Process ALL contacts in parallel (bounded by semaphore)
+    tasks = [
+        generate_with_semaphore(item, i)
+        for i, item in enumerate(request.contacts)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    # Count successes and failures
+    successful = sum(1 for r in results if r.success)
+    failed = len(results) - successful
+
+    print(f"[Bulk Generate] Completed: {successful} successful, {failed} failed out of {len(results)} total")
+
+    return BulkGenerateResponse(
+        results=results,
+        total=len(results),
+        successful=successful,
+        failed=failed,
+    )
 
 
 if __name__ == "__main__":

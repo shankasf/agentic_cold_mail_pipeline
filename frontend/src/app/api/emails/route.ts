@@ -38,7 +38,14 @@ export const GET = createApiHandler(
     const fromEmail = searchParams.get('fromEmail'); // Filter by sender identity
     const hasReplies = searchParams.get('hasReplies'); // Filter emails with replies
 
-    const { page, limit, skip } = getPaginationParams(request);
+    // Check if this is a bulk selection request (high limit = selecting all)
+    const requestedLimit = searchParams.get('limit');
+    const isBulkSelect = requestedLimit && parseInt(requestedLimit) > 100;
+
+    // Allow higher limit for bulk selection (up to 10000)
+    const { page, limit, skip } = getPaginationParams(request, {
+      maxLimit: isBulkSelect ? 10000 : 100,
+    });
 
     // Get user filter
     const userFilter = await getUserFilter(filterUserId);

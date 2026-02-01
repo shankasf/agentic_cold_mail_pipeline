@@ -104,7 +104,7 @@ function EmailsPageContent() {
   useEffect(() => {
     async function fetchIdentities() {
       try {
-        const res = await fetch('/api/identities');
+        const res = await fetch('/api/ses-identities');
         if (res.ok) {
           const data = await res.json();
           setSenderIdentities(data.identities?.map((i: { emailAddress: string; displayName: string }) => ({

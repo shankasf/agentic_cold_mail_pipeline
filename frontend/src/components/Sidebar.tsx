@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   FolderKanban,
   UserCheck,
+  Terminal,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -69,6 +70,7 @@ const manageNav: NavItem[] = [
 const adminNav: NavItem[] = [
   { name: 'Identities', href: '/dashboard/identities', icon: ShieldCheck },
   { name: 'Users', href: '/dashboard/users', icon: Users },
+  { name: 'Logs', href: '/dashboard/logs', icon: Terminal },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ];
 

@@ -40,7 +40,7 @@ async function getAIColumnMappings(
 ): Promise<AIColumnMappingResponse | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minutes
 
     const response = await fetch(`${AI_SERVICE_URL}/map-columns`, {
       method: 'POST',
@@ -179,9 +179,94 @@ function getFieldSynonyms(field: keyof typeof COLUMN_SYNONYMS): string[] {
   return COLUMN_SYNONYMS[field] || [];
 }
 
+// Standard field names that we map to database columns
+const STANDARD_FIELDS = ['email', 'business_name', 'website', 'industry', 'location', 'contact_name', 'role', 'phone', 'linkedin_url'];
+
+// Get all unmapped columns and their values for AI to use
+function extractCustomData(
+  row: Record<string, string>,
+  mappingDict: Record<string, string>
+): Record<string, string> {
+  const customData: Record<string, string> = {};
+  const mappedSourceCols = new Set(Object.keys(mappingDict).map(k => k.toLowerCase()));
+
+  for (const [key, value] of Object.entries(row)) {
+    // Skip if this column was mapped to a standard field
+    if (mappedSourceCols.has(key.toLowerCase())) continue;
+
+    // Skip empty values
+    if (!value || String(value).trim() === '') continue;
+
+    // Store with normalized key (spaces to underscores, lowercase)
+    const normalizedKey = key.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (normalizedKey) {
+      customData[normalizedKey] = String(value).trim();
+    }
+  }
+
+  return customData;
+}
+
+// Collect sample values for each column (first 3 non-empty values)
+function collectSampleValues(
+  rows: Record<string, string>[],
+  columnName: string
+): string[] {
+  const samples: string[] = [];
+  for (const row of rows) {
+    const value = row[columnName];
+    if (value && String(value).trim() && samples.length < 3) {
+      samples.push(String(value).trim().substring(0, 100)); // Limit to 100 chars
+    }
+    if (samples.length >= 3) break;
+  }
+  return samples;
+}
+
+// Save column definitions for the campaign (tracks all imported columns)
+async function saveColumnDefinitions(
+  campaignId: string,
+  headers: string[],
+  rows: Record<string, string>[],
+  mappingDict: Record<string, string>
+) {
+  const columns = headers.map((header, index) => {
+    const normalizedKey = header.toLowerCase().replace(/[\s\-]+/g, '_').replace(/[^a-z0-9_]/g, '');
+    const mappedTo = mappingDict[header] || mappingDict[header.toLowerCase()] || null;
+
+    return {
+      campaignId,
+      name: header,
+      key: normalizedKey || `col_${index}`,
+      mappedTo: STANDARD_FIELDS.includes(mappedTo || '') ? mappedTo : null,
+      type: 'text',
+      sampleValues: collectSampleValues(rows, header),
+      orderIndex: index,
+    };
+  });
+
+  // Upsert column definitions
+  for (const col of columns) {
+    await prisma.businessColumn.upsert({
+      where: {
+        campaignId_key: {
+          campaignId: col.campaignId,
+          key: col.key,
+        },
+      },
+      update: {
+        name: col.name,
+        mappedTo: col.mappedTo,
+        sampleValues: col.sampleValues,
+      },
+      create: col,
+    });
+  }
+}
+
 // POST /api/campaigns/[id]/import - Import file directly into campaign
 export const POST = createApiHandler(
-  async (request: NextRequest, { logger, user, params }: HandlerContext) => {
+  async (request: NextRequest, { logger, params }: HandlerContext) => {
     const campaignId = params.id;
     const userFilter = await getUserFilter();
 
@@ -242,10 +327,21 @@ export const POST = createApiHandler(
       throw Errors.badRequest(parseError instanceof Error ? parseError.message : 'Failed to parse file');
     }
 
+    // Get AI column mappings
     const aiMapping = await getAIColumnMappings(headers, rows);
-    const useAIMapping = aiMapping && Object.keys(aiMapping.mappingDict).length > 0;
+    const mappingDict = aiMapping?.mappingDict || {};
+    const useAIMapping = Object.keys(mappingDict).length > 0;
 
-    logger.debug('File parsed', { rowCount: rows.length, useAIMapping });
+    logger.debug('File parsed', {
+      rowCount: rows.length,
+      columnCount: headers.length,
+      useAIMapping,
+      mappedColumns: Object.keys(mappingDict).length,
+      unmappedColumns: aiMapping?.unmappedColumns?.length || 0,
+    });
+
+    // Save column definitions for this campaign (tracks ALL columns)
+    await saveColumnDefinitions(campaignId, headers, rows, mappingDict);
 
     const errors: Array<{ row: number; message: string }> = [];
     const invalidEmails: Array<{ row: number; email: string; reason: string }> = [];
@@ -257,11 +353,12 @@ export const POST = createApiHandler(
       const row = rows[i];
       const rowNum = i + 2;
 
+      // Extract standard fields
       const email = useAIMapping
-        ? extractWithAIMapping(row, 'email', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'email', mappingDict)
         : findColumn(row, getFieldSynonyms('email'));
       const name = useAIMapping
-        ? extractWithAIMapping(row, 'business_name', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'business_name', mappingDict)
         : findColumn(row, getFieldSynonyms('name'));
 
       const missingFields: string[] = [];
@@ -299,78 +396,117 @@ export const POST = createApiHandler(
         continue;
       }
 
+      // Extract all standard fields
       const website = useAIMapping
-        ? extractWithAIMapping(row, 'website', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'website', mappingDict)
         : findColumn(row, getFieldSynonyms('website'));
       const industry = useAIMapping
-        ? extractWithAIMapping(row, 'industry', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'industry', mappingDict)
         : findColumn(row, getFieldSynonyms('industry'));
       const location = useAIMapping
-        ? extractWithAIMapping(row, 'location', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'location', mappingDict)
         : findColumn(row, getFieldSynonyms('location'));
       const contactName = useAIMapping
-        ? extractWithAIMapping(row, 'contact_name', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'contact_name', mappingDict)
         : findColumn(row, getFieldSynonyms('contactName'));
       const role = useAIMapping
-        ? extractWithAIMapping(row, 'role', aiMapping.mappingDict)
+        ? extractWithAIMapping(row, 'role', mappingDict)
         : findColumn(row, getFieldSynonyms('role'));
+      const phone = useAIMapping
+        ? extractWithAIMapping(row, 'phone', mappingDict)
+        : findColumn(row, ['phone', 'telephone', 'mobile', 'cell', 'contact_phone']);
+      const linkedinUrl = useAIMapping
+        ? extractWithAIMapping(row, 'linkedin_url', mappingDict)
+        : findColumn(row, ['linkedin', 'linkedin_url', 'linkedin_profile', 'profile_url']);
+
+      // Extract ALL unmapped columns as customData for AI to use
+      const customData = extractCustomData(row, mappingDict);
 
       try {
         const businessName = name!;
         const contactEmail = email!;
 
-        const existingBusiness = await prisma.business.findUnique({
-          where: { canonicalName: businessName },
+        // Use transaction to ensure business and contact are created together
+        // If contact creation fails, business creation is rolled back
+        await prisma.$transaction(async (tx) => {
+          const existingBusiness = await tx.business.findUnique({
+            where: { canonicalName: businessName },
+          });
+
+          let businessId: string;
+
+          if (existingBusiness) {
+            businessId = existingBusiness.id;
+            // Merge existing customData with new data
+            const existingCustomData = (existingBusiness.customData as Record<string, string>) || {};
+            const mergedCustomData = { ...existingCustomData, ...customData };
+
+            // Update business with campaign assignment and any new info
+            await tx.business.update({
+              where: { id: businessId },
+              data: {
+                campaignId, // Assign to this campaign
+                website: website || existingBusiness.website,
+                industryGuess: industry || existingBusiness.industryGuess,
+                location: location || existingBusiness.location,
+                customData: mergedCustomData, // Store ALL extra columns for AI
+              },
+            });
+          } else {
+            const newBusiness = await tx.business.create({
+              data: {
+                userId,
+                campaignId, // Assign to this campaign
+                canonicalName: businessName,
+                website,
+                industryGuess: industry,
+                location,
+                customData, // Store ALL extra columns for AI
+              },
+            });
+            businessId = newBusiness.id;
+          }
+
+          // Handle contact - must succeed or entire transaction rolls back
+          const existingContact = await tx.contact.findUnique({
+            where: { email: contactEmail.toLowerCase() },
+          });
+
+          if (!existingContact) {
+            await tx.contact.create({
+              data: {
+                businessId,
+                email: contactEmail.toLowerCase(),
+                name: contactName,
+                role,
+                phone,
+                linkedinUrl,
+                customData, // Store extra columns on contact too for AI
+                sourceConfidence: 80,
+              },
+            });
+          } else {
+            // Update existing contact with any new info
+            const existingContactData = (existingContact.customData as Record<string, string>) || {};
+            const mergedContactData = { ...existingContactData, ...customData };
+
+            await tx.contact.update({
+              where: { id: existingContact.id },
+              data: {
+                name: contactName || existingContact.name,
+                role: role || existingContact.role,
+                phone: phone || existingContact.phone,
+                linkedinUrl: linkedinUrl || existingContact.linkedinUrl,
+                customData: mergedContactData,
+              },
+            });
+          }
         });
-
-        let businessId: string;
-
-        if (existingBusiness) {
-          businessId = existingBusiness.id;
-          // Update business with campaign assignment and any new info
-          await prisma.business.update({
-            where: { id: businessId },
-            data: {
-              campaignId, // Assign to this campaign
-              website: website || existingBusiness.website,
-              industryGuess: industry || existingBusiness.industryGuess,
-              location: location || existingBusiness.location,
-            },
-          });
-        } else {
-          const newBusiness = await prisma.business.create({
-            data: {
-              userId,
-              campaignId, // Assign to this campaign
-              canonicalName: businessName,
-              website,
-              industryGuess: industry,
-              location,
-            },
-          });
-          businessId = newBusiness.id;
-        }
-
-        const existingContact = await prisma.contact.findUnique({
-          where: { email: contactEmail.toLowerCase() },
-        });
-
-        if (!existingContact) {
-          await prisma.contact.create({
-            data: {
-              businessId,
-              email: contactEmail.toLowerCase(),
-              name: contactName,
-              role,
-              sourceConfidence: 80,
-            },
-          });
-        }
 
         created++;
       } catch (dbError) {
-        logger.error('Error creating business', dbError, { row: rowNum });
-        errors.push({ row: rowNum, message: 'Database error' });
+        logger.error('Error importing row (transaction rolled back)', dbError, { row: rowNum, business: name, email });
+        errors.push({ row: rowNum, message: `Failed to import: ${dbError instanceof Error ? dbError.message : 'Database error'}` });
         skipped++;
       }
     }
@@ -388,7 +524,14 @@ export const POST = createApiHandler(
       },
     });
 
-    logger.info('Import completed', { created, skipped, blockedCount, invalidEmailCount: invalidEmails.length });
+    logger.info('Import completed', {
+      created,
+      skipped,
+      blockedCount,
+      invalidEmailCount: invalidEmails.length,
+      totalColumns: headers.length,
+      mappedColumns: Object.keys(mappingDict).length,
+    });
 
     return jsonResponse({
       message: 'File uploaded and processed',
@@ -400,6 +543,12 @@ export const POST = createApiHandler(
       errors: errors.slice(0, 50),
       invalidEmails: invalidEmails.slice(0, 20), // Show first 20 invalid emails
       campaignId,
+      columnStats: {
+        totalColumns: headers.length,
+        mappedToStandard: Object.keys(mappingDict).length,
+        storedAsCustom: headers.length - Object.keys(mappingDict).length,
+        columns: headers,
+      },
     });
   },
   { requireAuth: true }

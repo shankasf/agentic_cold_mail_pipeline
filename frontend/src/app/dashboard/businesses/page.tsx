@@ -1,11 +1,25 @@
 'use client';
 
-import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useEffect, useState, useCallback, Suspense, useRef } from 'react';
 import Link from 'next/link';
-import { Building2, Mail, FileText, ExternalLink, Search, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react';
+import { Building2, Mail, FileText, ExternalLink, Search, CheckSquare, Square, Loader2, Filter, X, ChevronDown, ChevronUp, Plus, Trash2, StopCircle, CheckCircle, AlertCircle } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
 import CampaignFilter from '@/components/CampaignFilter';
+import { useToast } from '@/components/Toast';
+
+interface JobProgress {
+  type: string;
+  message?: string;
+  stats?: {
+    total: number;
+    completed: number;
+    successful: number;
+    failed: number;
+    currentEmail?: string;
+    currentBusiness?: string;
+  };
+}
 
 interface Business {
   id: string;
@@ -52,6 +66,7 @@ const defaultFilters: Filters = {
 function BusinessesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const toast = useToast();
   const campaignId = searchParams.get('campaignId');
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +84,10 @@ function BusinessesPageContent() {
 
   // Email Generation state
   const [generatingEmails, setGeneratingEmails] = useState(false);
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<JobProgress | null>(null);
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Delete state
   const [deleting, setDeleting] = useState(false);
@@ -199,11 +218,84 @@ function BusinessesPageContent() {
     }
   };
 
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  // Connect to SSE for job progress
+  const connectToJobStream = (jobId: string) => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const es = new EventSource(`/api/businesses/generate-emails/${jobId}/stream`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as JobProgress;
+        setJobProgress(data);
+
+        if (data.type === 'completed' || data.type === 'cancelled') {
+          es.close();
+          eventSourceRef.current = null;
+          setGeneratingEmails(false);
+
+          if (data.type === 'completed') {
+            toast.success(
+              'Email Generation Complete',
+              `Generated ${data.stats?.successful || 0} emails successfully${data.stats?.failed ? `, ${data.stats.failed} failed` : ''}`
+            );
+          } else {
+            toast.info(
+              'Generation Stopped',
+              `Stopped after generating ${data.stats?.successful || 0} emails. All progress has been saved.`
+            );
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing SSE message:', e);
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      eventSourceRef.current = null;
+    };
+  };
+
+  // Cancel job handler
+  const handleCancelJob = async () => {
+    if (!currentJobId) return;
+
+    try {
+      const res = await fetch(`/api/businesses/generate-emails/${currentJobId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        toast.info('Cancellation Requested', 'Stopping after current email completes...');
+      } else {
+        toast.error('Cancel Failed', data.message || 'Failed to cancel job');
+      }
+    } catch (error) {
+      toast.error('Cancel Failed', 'Failed to connect to server');
+    }
+  };
+
   // Generate Emails handler
   const handleGenerateEmails = async () => {
     if (selectedIds.length === 0) return;
 
     setGeneratingEmails(true);
+    setJobProgress(null);
+    setShowProgressModal(true);
 
     try {
       const res = await fetch('/api/businesses/generate-emails', {
@@ -217,25 +309,61 @@ function BusinessesPageContent() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error?.message || data.error || 'Failed to generate emails');
+        setShowProgressModal(false);
+        setGeneratingEmails(false);
+
+        // Parse error for better display
+        const errorMsg = data.error?.message || data.error || 'Failed to generate emails';
+
+        // Check for specific error types
+        if (errorMsg.includes('No contacts found')) {
+          const companyNames = errorMsg.match(/\(([^)]+)\)/)?.[1] || 'selected companies';
+          toast.error(
+            'No Contacts Found',
+            `The following companies have no contacts: ${companyNames}`,
+            ['Add contacts to these companies before generating emails', 'Go to the company details page to add contacts']
+          );
+        } else if (errorMsg.includes('No SES identity')) {
+          toast.error(
+            'Email Identity Required',
+            'You need to set up an email sending identity first',
+            ['Go to Settings → Email Identities to add your sending email address']
+          );
+        } else if (errorMsg.includes('AI service')) {
+          toast.error(
+            'AI Service Unavailable',
+            'The email generation service is temporarily unavailable',
+            ['Please try again in a few moments', 'If the issue persists, contact support']
+          );
+        } else {
+          toast.error('Failed to Generate Emails', errorMsg);
+        }
+        return;
       }
 
-      // Build message with warning if any
-      let message = data.message || `Generated ${data.emailsCreated} email(s)`;
-      if (data.warning) {
-        message += `\n\n⚠️ Warning: ${data.warning}`;
-      }
+      // Job started successfully - connect to SSE
+      if (data.jobId) {
+        setCurrentJobId(data.jobId);
+        connectToJobStream(data.jobId);
 
-      alert(message);
+        // Show confirmation that background generation started
+        toast.info(
+          'Email Generation Started',
+          `Generating emails for ${data.totalContacts} contact(s) in background. You can continue working.`
+        );
 
-      // Redirect to emails list if any emails were created
-      if (data.emailsCreated > 0) {
-        router.push('/dashboard/emails');
+        if (data.warning) {
+          toast.warning('Some Contacts Skipped', data.warning);
+        }
       }
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to generate emails');
-    } finally {
+      setShowProgressModal(false);
       setGeneratingEmails(false);
+      toast.error(
+        'Connection Error',
+        'Failed to connect to the server. Please check your internet connection.',
+        [error instanceof Error ? error.message : 'Unknown error']
+      );
     }
   };
 
@@ -243,9 +371,10 @@ function BusinessesPageContent() {
   const handleDeleteCompanies = async (idsToDelete: string[]) => {
     if (idsToDelete.length === 0) return;
 
-    const confirmMessage = idsToDelete.length === 1
+    const countToDelete = idsToDelete.length;
+    const confirmMessage = countToDelete === 1
       ? 'Are you sure you want to delete this company? This will also delete all associated contacts, evidence, and email drafts.'
-      : `Are you sure you want to delete ${idsToDelete.length} companies? This will also delete all associated contacts, evidence, and email drafts.`;
+      : `Are you sure you want to delete ${countToDelete} companies? This will also delete all associated contacts, evidence, and email drafts.`;
 
     if (!confirm(confirmMessage)) return;
 
@@ -260,15 +389,35 @@ function BusinessesPageContent() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error?.message || data.error || 'Failed to delete companies');
+        toast.error(
+          'Delete Failed',
+          data.error?.message || data.error || 'Failed to delete companies'
+        );
+        return;
       }
 
-      alert(data.message);
+      // Show detailed message
+      if (data.deletedCount !== countToDelete) {
+        toast.warning(
+          'Partial Delete',
+          `Deleted ${data.deletedCount} of ${countToDelete} companies`,
+          ['Some companies may have already been deleted', 'Some may belong to another user']
+        );
+      } else {
+        toast.success(
+          'Companies Deleted',
+          `Successfully deleted ${data.deletedCount} ${data.deletedCount === 1 ? 'company' : 'companies'}`
+        );
+      }
+
       setSelectedIds([]);
       setSelectAll(false);
       fetchBusinesses();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to delete companies');
+      toast.error(
+        'Delete Failed',
+        error instanceof Error ? error.message : 'Failed to delete companies'
+      );
     } finally {
       setDeleting(false);
     }
@@ -277,14 +426,14 @@ function BusinessesPageContent() {
   // Create Company handler
   const handleCreateCompany = async () => {
     if (!newCompany.name.trim()) {
-      alert('Company name is required');
+      toast.warning('Missing Information', 'Company name is required');
       return;
     }
 
     // Check if at least one contact has an email
     const validContacts = newContacts.filter(c => c.email.trim());
     if (validContacts.length === 0) {
-      alert('Please add at least one contact email');
+      toast.warning('Missing Information', 'Please add at least one contact email');
       return;
     }
 
@@ -306,16 +455,30 @@ function BusinessesPageContent() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error?.message || data.error || 'Failed to create company');
+        const errorMsg = data.error?.message || data.error || 'Failed to create company';
+        if (errorMsg.includes('already exists')) {
+          toast.error('Company Already Exists', `A company with this name already exists in the system`);
+        } else if (errorMsg.includes('Invalid email')) {
+          toast.error('Invalid Email', errorMsg);
+        } else {
+          toast.error('Failed to Create Company', errorMsg);
+        }
+        return;
       }
 
-      alert(`Company "${data.canonicalName}" created successfully with ${data.contacts?.length || 0} contact(s)`);
+      toast.success(
+        'Company Created',
+        `"${data.canonicalName}" with ${data.contacts?.length || 0} contact(s)`
+      );
       setShowCreateModal(false);
       setNewCompany({ name: '', website: '', industry: '', location: '' });
       setNewContacts([{ email: '', name: '', role: '' }]);
       fetchBusinesses();
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Failed to create company');
+      toast.error(
+        'Failed to Create Company',
+        error instanceof Error ? error.message : 'Unknown error occurred'
+      );
     } finally {
       setCreating(false);
     }
@@ -713,6 +876,138 @@ function BusinessesPageContent() {
           </>
         )}
       </div>
+
+      {/* Email Generation Progress Modal */}
+      {showProgressModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex min-h-full items-center justify-center p-4">
+            <div className="fixed inset-0 bg-gray-500 bg-opacity-75" />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-lg w-full">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    {jobProgress?.type === 'completed' ? (
+                      <CheckCircle className="w-5 h-5 text-green-500" />
+                    ) : jobProgress?.type === 'cancelled' ? (
+                      <AlertCircle className="w-5 h-5 text-yellow-500" />
+                    ) : (
+                      <Loader2 className="w-5 h-5 animate-spin text-primary-600" />
+                    )}
+                    {jobProgress?.type === 'completed'
+                      ? 'Generation Complete'
+                      : jobProgress?.type === 'cancelled'
+                      ? 'Generation Stopped'
+                      : 'Generating Emails...'}
+                  </h3>
+                </div>
+
+                {/* Progress Bar */}
+                {jobProgress?.stats && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-sm text-gray-600 mb-1">
+                      <span>{jobProgress.stats.completed} of {jobProgress.stats.total}</span>
+                      <span>{Math.round((jobProgress.stats.completed / jobProgress.stats.total) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-3">
+                      <div
+                        className="bg-gradient-to-r from-purple-500 to-blue-500 h-3 rounded-full transition-all duration-300"
+                        style={{ width: `${(jobProgress.stats.completed / jobProgress.stats.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Stats */}
+                {jobProgress?.stats && (
+                  <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="text-center p-3 bg-gray-50 rounded-lg">
+                      <div className="text-2xl font-bold text-gray-900">{jobProgress.stats.total}</div>
+                      <div className="text-xs text-gray-500">Total</div>
+                    </div>
+                    <div className="text-center p-3 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">{jobProgress.stats.successful}</div>
+                      <div className="text-xs text-gray-500">Success</div>
+                    </div>
+                    <div className="text-center p-3 bg-red-50 rounded-lg">
+                      <div className="text-2xl font-bold text-red-600">{jobProgress.stats.failed}</div>
+                      <div className="text-xs text-gray-500">Failed</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Current Processing */}
+                {jobProgress?.stats?.currentEmail && jobProgress.type === 'progress' && (
+                  <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+                    <div className="text-sm text-blue-800">
+                      <span className="font-medium">Processing:</span> {jobProgress.stats.currentEmail}
+                    </div>
+                    {jobProgress.stats.currentBusiness && (
+                      <div className="text-xs text-blue-600 mt-1">
+                        Company: {jobProgress.stats.currentBusiness}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Message */}
+                {jobProgress?.message && (
+                  <p className="text-sm text-gray-600 mb-4">{jobProgress.message}</p>
+                )}
+
+                {/* Actions */}
+                <div className="flex justify-end gap-3">
+                  {generatingEmails && jobProgress?.type !== 'completed' && jobProgress?.type !== 'cancelled' ? (
+                    <>
+                      <button
+                        onClick={handleCancelJob}
+                        className="btn-secondary flex items-center gap-2 text-red-600 border-red-300 hover:bg-red-50"
+                      >
+                        <StopCircle className="w-4 h-4" />
+                        Stop
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowProgressModal(false);
+                          toast.info(
+                            'Running in Background',
+                            `Generating ${jobProgress?.stats?.total || 0} emails. You'll receive an email when complete.`
+                          );
+                        }}
+                        className="btn-primary flex items-center gap-2"
+                      >
+                        <Mail className="w-4 h-4" />
+                        Run in Background
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => {
+                          setShowProgressModal(false);
+                          setJobProgress(null);
+                          setCurrentJobId(null);
+                        }}
+                        className="btn-secondary"
+                      >
+                        Close
+                      </button>
+                      {(jobProgress?.stats?.successful || 0) > 0 && (
+                        <button
+                          onClick={() => router.push('/dashboard/emails')}
+                          className="btn-primary flex items-center gap-2"
+                        >
+                          <Mail className="w-4 h-4" />
+                          View Emails
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Company Modal */}
       {showCreateModal && (

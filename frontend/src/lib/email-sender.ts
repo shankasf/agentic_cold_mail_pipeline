@@ -3,6 +3,7 @@ import prisma from './prisma';
 import { startOfDay } from 'date-fns';
 import { publishEmailEvent } from './redis';
 import { SESIdentity } from '@prisma/client';
+import { validateEmail, getValidationSummary } from './pre-send-validation';
 
 /**
  * Find an SES identity for a given email address.
@@ -38,6 +39,13 @@ async function findIdentityForEmail(email: string): Promise<SESIdentity | null> 
 const PROTECTED_IDENTITIES = [
   'sagar@callsphere.tech',
 ];
+
+// Reputation thresholds for smart rotation
+const REPUTATION_THRESHOLDS = {
+  GOOD: 2,      // Bounce rate < 2% is good
+  MODERATE: 5,  // Bounce rate < 5% is moderate
+  POOR: 10,     // Bounce rate > 10% is poor
+};
 
 /**
  * Get all available SES identities with remaining quota.
@@ -76,31 +84,157 @@ export async function getAvailableIdentities(includeProtected: boolean = true): 
 
 /**
  * Find the best available identity with remaining quota.
- * Strategy:
- * 1. First try non-protected identities with most remaining quota
+ * Strategy (Smart Rotation):
+ * 1. First try non-protected identities using weighted selection (quota * reputation)
  * 2. Only fall back to protected identities when all others are exhausted
  * This protects primary emails (like sagar@callsphere.tech) for important communications.
  */
 export async function findBestAvailableIdentity(): Promise<SESIdentity | null> {
-  // First, try non-protected identities only
+  // First, try non-protected identities only with smart rotation
   const nonProtectedIdentities = await getAvailableIdentities(false);
 
   if (nonProtectedIdentities.length > 0) {
-    // Return the one with most remaining quota (already sorted)
-    console.log(`[Identity Router] Using non-protected identity: ${nonProtectedIdentities[0].emailAddress} (${nonProtectedIdentities[0].dailyLimit - nonProtectedIdentities[0].sentToday} remaining)`);
-    return nonProtectedIdentities[0];
+    // Use smart rotation based on reputation and remaining quota
+    const selected = await selectBestIdentity(nonProtectedIdentities);
+    if (selected) {
+      console.log(`[Identity Router] Smart rotation selected: ${selected.emailAddress} (${selected.dailyLimit - selected.sentToday} remaining)`);
+      return selected;
+    }
   }
 
   // If no non-protected identities available, fall back to protected ones
   const allIdentities = await getAvailableIdentities(true);
 
   if (allIdentities.length > 0) {
-    console.log(`[Identity Router] WARNING: All non-protected identities exhausted. Falling back to protected identity: ${allIdentities[0].emailAddress}`);
-    return allIdentities[0];
+    // Also use smart rotation for protected identities
+    const selected = await selectBestIdentity(allIdentities);
+    if (selected) {
+      console.log(`[Identity Router] WARNING: Falling back to protected identity: ${selected.emailAddress}`);
+      return selected;
+    }
   }
 
   console.log('[Identity Router] ERROR: No identities available with remaining quota');
   return null;
+}
+
+/**
+ * Calculate reputation score for an identity based on recent events
+ * Score is 0-100, higher is better
+ */
+async function calculateReputationScore(identityId: string): Promise<number> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Last 7 days
+
+  // Get email events for this identity
+  const [totalSent, bounced, complaints] = await Promise.all([
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'SENT',
+        sentAt: { gte: since },
+      },
+    }),
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'BOUNCED',
+        updatedAt: { gte: since },
+      },
+    }),
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'COMPLAINT',
+        updatedAt: { gte: since },
+      },
+    }),
+  ]);
+
+  if (totalSent === 0) {
+    return 100; // No history = perfect score (new identity)
+  }
+
+  const bounceRate = (bounced / totalSent) * 100;
+  const complaintRate = (complaints / totalSent) * 100;
+
+  // Calculate score: start at 100, deduct for bounces and complaints
+  let score = 100;
+
+  // Deduct for bounce rate (max 40 points)
+  if (bounceRate >= REPUTATION_THRESHOLDS.POOR) {
+    score -= 40;
+  } else if (bounceRate >= REPUTATION_THRESHOLDS.MODERATE) {
+    score -= 20;
+  } else if (bounceRate >= REPUTATION_THRESHOLDS.GOOD) {
+    score -= 10;
+  }
+
+  // Deduct for complaint rate (max 60 points - complaints are more serious)
+  if (complaintRate >= 0.1) {
+    score -= 60;
+  } else if (complaintRate >= 0.05) {
+    score -= 30;
+  } else if (complaintRate >= 0.01) {
+    score -= 15;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Smart identity selection using weighted scoring
+ * Weight = remaining quota * reputation score
+ */
+export async function selectBestIdentity(
+  identities: SESIdentity[]
+): Promise<SESIdentity | null> {
+  if (identities.length === 0) return null;
+
+  // Calculate weights for each identity
+  const weights = await Promise.all(
+    identities.map(async (identity) => {
+      const remaining = identity.dailyLimit - identity.sentToday;
+      const reputationScore = await calculateReputationScore(identity.id);
+
+      // Weight = remaining capacity * (reputation / 100)
+      // This prioritizes identities with good reputation AND available quota
+      const weight = remaining * (reputationScore / 100);
+
+      return {
+        identity,
+        weight,
+        remaining,
+        reputationScore,
+      };
+    })
+  );
+
+  // Sort by weight (highest first)
+  weights.sort((a, b) => b.weight - a.weight);
+
+  // Use weighted random selection for distribution
+  // This prevents always using the same identity
+  const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+
+  if (totalWeight <= 0) {
+    // Fall back to first available
+    const available = weights.find(w => w.remaining > 0);
+    return available?.identity || null;
+  }
+
+  // Weighted random selection
+  let random = Math.random() * totalWeight;
+  for (const w of weights) {
+    random -= w.weight;
+    if (random <= 0 && w.remaining > 0) {
+      console.log(`[Smart Rotation] Selected ${w.identity.emailAddress} (weight: ${w.weight.toFixed(2)}, reputation: ${w.reputationScore}, remaining: ${w.remaining})`);
+      return w.identity;
+    }
+  }
+
+  // Fall back to highest weighted with capacity
+  const best = weights.find(w => w.remaining > 0);
+  return best?.identity || null;
 }
 
 /**
@@ -554,6 +688,27 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
 
     // Generate HTML version of the email (pass empty string for footer to avoid any address)
     const htmlBody = generateHtmlEmail(email.bodyText, '', email.fromName);
+
+    // Pre-send validation
+    const validation = validateEmail({
+      toEmail: email.contact.email,
+      fromEmail: email.fromEmail,
+      subject: email.subject,
+      bodyText: fullBody,
+      bodyHtml: htmlBody,
+    });
+
+    if (!validation.valid) {
+      console.log(`[sendEmail] Pre-send validation failed for ${emailDraftId}: ${getValidationSummary(validation)}`);
+      return {
+        success: false,
+        error: `Validation failed: ${validation.errors.map(e => e.message).join(', ')}`,
+      };
+    }
+
+    if (validation.warnings.length > 0) {
+      console.log(`[sendEmail] Pre-send validation warnings for ${emailDraftId}: ${validation.warnings.map(w => w.message).join(', ')}`);
+    }
 
     // Generate unsubscribe link (using mailto for simplicity)
     const unsubscribeEmail = email.fromEmail;

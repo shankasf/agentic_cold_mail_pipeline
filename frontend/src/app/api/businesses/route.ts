@@ -338,7 +338,8 @@ export const DELETE = createApiHandler(
       throw Errors.badRequest('At least one business ID is required');
     }
 
-    logger.debug('Deleting businesses', { count: ids.length });
+    const requestedCount = ids.length;
+    logger.debug('Deleting businesses', { requestedCount });
 
     // Get user filter (non-admins can only delete their own)
     const userFilter = await getUserFilter();
@@ -362,11 +363,19 @@ export const DELETE = createApiHandler(
       return deleteResult;
     });
 
-    logger.info('Businesses deleted', { deletedCount: result.count });
+    logger.info('Businesses deleted', { requestedCount, deletedCount: result.count });
+
+    // Build message with info about any skipped records
+    let message = `Successfully deleted ${result.count} company(ies)`;
+    if (result.count < requestedCount) {
+      const skipped = requestedCount - result.count;
+      message += ` (${skipped} skipped - may not exist or belong to another user)`;
+    }
 
     return jsonResponse({
-      message: `Successfully deleted ${result.count} company(ies)`,
+      message,
       deletedCount: result.count,
+      requestedCount,
     });
   },
   { requireAuth: true }

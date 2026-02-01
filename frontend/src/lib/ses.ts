@@ -9,6 +9,8 @@ import {
   SendEmailCommand,
   SendEmailCommandInput,
 } from '@aws-sdk/client-sesv2';
+import { sesCircuitBreaker, CircuitBreakerError } from './circuit-breaker';
+import { logger } from './logger';
 
 // SES Client singleton
 let sesClient: SESv2Client | null = null;
@@ -24,6 +26,20 @@ function getSESClient(): SESv2Client {
     });
   }
   return sesClient;
+}
+
+/**
+ * Check if SES circuit breaker is healthy
+ */
+export function isSESHealthy(): boolean {
+  return sesCircuitBreaker.getState() === 'CLOSED';
+}
+
+/**
+ * Get SES circuit breaker status
+ */
+export function getSESCircuitStatus() {
+  return sesCircuitBreaker.getStatus();
 }
 
 // Configuration
@@ -299,7 +315,7 @@ export async function deleteConfigurationSet(configSetName: string): Promise<{
 }
 
 /**
- * Send an email via SES
+ * Send an email via SES with circuit breaker protection
  */
 export async function sendEmail(params: {
   from: string;
@@ -318,58 +334,73 @@ export async function sendEmail(params: {
   error?: string;
 }> {
   try {
-    const client = getSESClient();
+    // Use circuit breaker for SES calls
+    return await sesCircuitBreaker.call(async () => {
+      const client = getSESClient();
 
-    const fromAddress = params.fromName
-      ? `${params.fromName} <${params.from}>`
-      : params.from;
+      const fromAddress = params.fromName
+        ? `${params.fromName} <${params.from}>`
+        : params.from;
 
-    const input: SendEmailCommandInput = {
-      FromEmailAddress: fromAddress,
-      Destination: {
-        ToAddresses: [params.to],
-      },
-      Content: {
-        Simple: {
-          Subject: {
-            Data: params.subject,
-            Charset: 'UTF-8',
-          },
-          Body: {
-            Text: {
-              Data: params.bodyText,
+      const input: SendEmailCommandInput = {
+        FromEmailAddress: fromAddress,
+        Destination: {
+          ToAddresses: [params.to],
+        },
+        Content: {
+          Simple: {
+            Subject: {
+              Data: params.subject,
               Charset: 'UTF-8',
             },
-            ...(params.bodyHtml && {
-              Html: {
-                Data: params.bodyHtml,
+            Body: {
+              Text: {
+                Data: params.bodyText,
                 Charset: 'UTF-8',
               },
-            }),
+              ...(params.bodyHtml && {
+                Html: {
+                  Data: params.bodyHtml,
+                  Charset: 'UTF-8',
+                },
+              }),
+            },
           },
         },
-      },
-      ...(params.configSetName && {
-        ConfigurationSetName: params.configSetName,
-      }),
-      ...(params.replyTo && {
-        ReplyToAddresses: [params.replyTo],
-      }),
-    };
+        ...(params.configSetName && {
+          ConfigurationSetName: params.configSetName,
+        }),
+        ...(params.replyTo && {
+          ReplyToAddresses: [params.replyTo],
+        }),
+      };
 
-    // For threading, we need to use raw email
-    // This simple version doesn't support In-Reply-To headers
-    // For full threading support, use SendRawEmailCommand
+      // For threading, we need to use raw email
+      // This simple version doesn't support In-Reply-To headers
+      // For full threading support, use SendRawEmailCommand
 
-    const command = new SendEmailCommand(input);
-    const response = await client.send(command);
+      const command = new SendEmailCommand(input);
+      const response = await client.send(command);
 
-    return {
-      success: true,
-      messageId: response.MessageId,
-    };
+      return {
+        success: true,
+        messageId: response.MessageId,
+      };
+    });
   } catch (error: any) {
-    console.error('Error sending email:', error);
+    // Check if it's a circuit breaker error
+    if (error instanceof CircuitBreakerError) {
+      logger.warn('SES circuit breaker is open', {
+        timeUntilRetry: error.timeUntilRetry,
+        to: params.to,
+      });
+      return {
+        success: false,
+        error: `SES service temporarily unavailable. Retry in ${Math.ceil(error.timeUntilRetry / 1000)}s`,
+      };
+    }
+
+    logger.error('Error sending email via SES', error, { to: params.to });
     return {
       success: false,
       error: error.message || 'Failed to send email',
@@ -399,6 +430,27 @@ export const WARMUP_SCHEDULE = [
 ];
 
 /**
+ * Adaptive warmup thresholds
+ */
+export const ADAPTIVE_WARMUP_CONFIG = {
+  // Slow down warmup if these thresholds are exceeded
+  bounceRateSlowdown: 2,      // Bounce rate > 2%
+  complaintRateSlowdown: 0.1, // Complaint rate > 0.1%
+
+  // Pause warmup entirely if these are exceeded
+  bounceRatePause: 5,         // Bounce rate > 5%
+  complaintRatePause: 0.2,    // Complaint rate > 0.2%
+
+  // Speed up warmup if engagement is excellent
+  openRateSpeedup: 30,        // Open rate > 30%
+  clickRateSpeedup: 5,        // Click rate > 5%
+
+  // Modifiers
+  slowdownMultiplier: 0.5,    // Cut limit in half when slowing down
+  speedupMultiplier: 1.25,    // 25% boost when speeding up
+};
+
+/**
  * Get the daily limit based on warmup day
  */
 export function getWarmupLimit(warmupDay: number): number {
@@ -409,4 +461,200 @@ export function getWarmupLimit(warmupDay: number): number {
     }
   }
   return WARMUP_SCHEDULE[0].limit;
+}
+
+/**
+ * Calculate adaptive warmup limit based on identity performance
+ */
+export interface AdaptiveWarmupResult {
+  baseLimit: number;
+  adaptiveLimit: number;
+  action: 'normal' | 'slowdown' | 'speedup' | 'pause';
+  reason?: string;
+  metrics: {
+    bounceRate: number;
+    complaintRate: number;
+    openRate: number;
+    totalSent: number;
+  };
+}
+
+export async function calculateAdaptiveWarmupLimit(
+  identityId: string,
+  warmupDay: number
+): Promise<AdaptiveWarmupResult> {
+  // Import prisma dynamically to avoid circular dependency
+  const { default: prisma } = await import('./prisma');
+
+  const baseLimit = getWarmupLimit(warmupDay);
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Last 7 days
+
+  // Get performance metrics for this identity
+  const [totalSent, bounced, complaints, opens] = await Promise.all([
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'SENT',
+        sentAt: { gte: since },
+      },
+    }),
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'BOUNCED',
+        updatedAt: { gte: since },
+      },
+    }),
+    prisma.emailDraft.count({
+      where: {
+        sesIdentityId: identityId,
+        status: 'COMPLAINT',
+        updatedAt: { gte: since },
+      },
+    }),
+    prisma.emailEvent.count({
+      where: {
+        emailDraft: {
+          sesIdentityId: identityId,
+          sentAt: { gte: since },
+        },
+        eventType: 'OPEN',
+      },
+    }),
+  ]);
+
+  // Calculate rates
+  const bounceRate = totalSent > 0 ? (bounced / totalSent) * 100 : 0;
+  const complaintRate = totalSent > 0 ? (complaints / totalSent) * 100 : 0;
+  const openRate = totalSent > 0 ? (opens / totalSent) * 100 : 0;
+
+  const metrics = { bounceRate, complaintRate, openRate, totalSent };
+
+  // Not enough data yet - use base limit
+  if (totalSent < 50) {
+    return {
+      baseLimit,
+      adaptiveLimit: baseLimit,
+      action: 'normal',
+      reason: 'Insufficient data for adaptive adjustment',
+      metrics,
+    };
+  }
+
+  // Check for pause conditions (critical reputation issues)
+  if (bounceRate >= ADAPTIVE_WARMUP_CONFIG.bounceRatePause) {
+    logger.warn('Adaptive warmup: PAUSE due to high bounce rate', {
+      identityId,
+      bounceRate,
+      threshold: ADAPTIVE_WARMUP_CONFIG.bounceRatePause,
+    });
+    return {
+      baseLimit,
+      adaptiveLimit: 0, // Pause sending
+      action: 'pause',
+      reason: `Bounce rate ${bounceRate.toFixed(2)}% exceeds pause threshold ${ADAPTIVE_WARMUP_CONFIG.bounceRatePause}%`,
+      metrics,
+    };
+  }
+
+  if (complaintRate >= ADAPTIVE_WARMUP_CONFIG.complaintRatePause) {
+    logger.warn('Adaptive warmup: PAUSE due to high complaint rate', {
+      identityId,
+      complaintRate,
+      threshold: ADAPTIVE_WARMUP_CONFIG.complaintRatePause,
+    });
+    return {
+      baseLimit,
+      adaptiveLimit: 0,
+      action: 'pause',
+      reason: `Complaint rate ${complaintRate.toFixed(3)}% exceeds pause threshold ${ADAPTIVE_WARMUP_CONFIG.complaintRatePause}%`,
+      metrics,
+    };
+  }
+
+  // Check for slowdown conditions
+  if (bounceRate >= ADAPTIVE_WARMUP_CONFIG.bounceRateSlowdown ||
+      complaintRate >= ADAPTIVE_WARMUP_CONFIG.complaintRateSlowdown) {
+    const adaptiveLimit = Math.floor(baseLimit * ADAPTIVE_WARMUP_CONFIG.slowdownMultiplier);
+    logger.info('Adaptive warmup: SLOWDOWN due to elevated rates', {
+      identityId,
+      bounceRate,
+      complaintRate,
+      baseLimit,
+      adaptiveLimit,
+    });
+    return {
+      baseLimit,
+      adaptiveLimit,
+      action: 'slowdown',
+      reason: `Rates elevated (bounce: ${bounceRate.toFixed(2)}%, complaint: ${complaintRate.toFixed(3)}%)`,
+      metrics,
+    };
+  }
+
+  // Check for speedup conditions (excellent engagement)
+  if (openRate >= ADAPTIVE_WARMUP_CONFIG.openRateSpeedup &&
+      bounceRate < 1 && complaintRate < 0.05) {
+    const adaptiveLimit = Math.floor(baseLimit * ADAPTIVE_WARMUP_CONFIG.speedupMultiplier);
+    // Don't exceed next tier's limit
+    const nextTierLimit = getWarmupLimit(warmupDay + 7);
+    const cappedLimit = Math.min(adaptiveLimit, nextTierLimit);
+
+    logger.info('Adaptive warmup: SPEEDUP due to excellent engagement', {
+      identityId,
+      openRate,
+      baseLimit,
+      adaptiveLimit: cappedLimit,
+    });
+    return {
+      baseLimit,
+      adaptiveLimit: cappedLimit,
+      action: 'speedup',
+      reason: `Excellent engagement (open rate: ${openRate.toFixed(1)}%)`,
+      metrics,
+    };
+  }
+
+  // Normal operation
+  return {
+    baseLimit,
+    adaptiveLimit: baseLimit,
+    action: 'normal',
+    metrics,
+  };
+}
+
+/**
+ * Get warmup status for all identities
+ */
+export async function getWarmupStatus(): Promise<Array<{
+  identityId: string;
+  emailAddress: string;
+  warmupDay: number;
+  status: string;
+  adaptive: AdaptiveWarmupResult;
+}>> {
+  const { default: prisma } = await import('./prisma');
+
+  const identities = await prisma.sESIdentity.findMany({
+    where: {
+      warmupEnabled: true,
+      status: { in: ['VERIFIED', 'WARMING', 'ACTIVE'] },
+    },
+  });
+
+  const results = await Promise.all(
+    identities.map(async (identity) => {
+      const adaptive = await calculateAdaptiveWarmupLimit(identity.id, identity.warmupDay);
+      return {
+        identityId: identity.id,
+        emailAddress: identity.emailAddress,
+        warmupDay: identity.warmupDay,
+        status: identity.status,
+        adaptive,
+      };
+    })
+  );
+
+  return results;
 }

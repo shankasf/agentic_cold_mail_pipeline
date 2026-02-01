@@ -80,7 +80,7 @@ export const POST = createApiHandler(
   { requireAuth: true }
 );
 
-// Background processing function
+// Background processing function - includes customData for AI personalization
 async function processAIFollowUpGeneration(
   jobId: string,
   originalEmails: Array<{
@@ -98,6 +98,9 @@ async function processAIFollowUpGeneration(
       email: string;
       name: string | null;
       role: string | null;
+      phone?: string | null;
+      linkedinUrl?: string | null;
+      customData?: unknown;
     };
     business: {
       id: string;
@@ -105,9 +108,11 @@ async function processAIFollowUpGeneration(
       website: string | null;
       industryGuess: string | null;
       location: string | null;
+      customData?: unknown;
+      enrichmentData?: unknown;
     };
   }>,
-  logger: any
+  logger: { error: (msg: string, err?: unknown, meta?: Record<string, unknown>) => void }
 ) {
   const stats = {
     total: originalEmails.length,
@@ -151,13 +156,16 @@ async function processAIFollowUpGeneration(
         await publishProgress('step_change', undefined, 2);
         await publishProgress('log', `Generating follow-up for ${email.contact.email}...`, 2, 'step');
 
-        // Prepare data for AI service
+        // Prepare data for AI service - include ALL customData for personalization
         const business = {
           id: email.business.id,
           canonical_name: email.business.canonicalName,
           website: email.business.website,
           industry_guess: email.business.industryGuess,
           location: email.business.location,
+          // Include ALL custom data from import for AI personalization
+          customData: email.business.customData || {},
+          enrichmentData: email.business.enrichmentData || {},
         };
 
         const contact = {
@@ -165,6 +173,10 @@ async function processAIFollowUpGeneration(
           email: email.contact.email,
           name: email.contact.name || undefined,
           role: email.contact.role || undefined,
+          phone: email.contact.phone || undefined,
+          linkedinUrl: email.contact.linkedinUrl || undefined,
+          // Include ALL custom contact data for AI personalization
+          customData: email.contact.customData || {},
         };
 
         const previousEmail = {
@@ -172,7 +184,7 @@ async function processAIFollowUpGeneration(
           bodyText: email.bodyText,
         };
 
-        // Call AI service to generate follow-up
+        // Call AI service to generate follow-up with ALL available data
         const response = await fetch(`${AI_SERVICE_URL}/generate-follow-up`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

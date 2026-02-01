@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Sidebar, { MobileHeader } from '@/components/Sidebar';
 import { AuthProvider } from '@/context/AuthContext';
+import { ToastProvider } from '@/components/Toast';
 
 export default function DashboardLayout({
   children,
@@ -13,18 +14,20 @@ export default function DashboardLayout({
 
   return (
     <AuthProvider>
-      <div className="h-screen flex flex-col lg:flex-row overflow-hidden">
-        {/* Mobile header - only shows on mobile */}
-        <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
+      <ToastProvider>
+        <div className="h-screen flex flex-col lg:flex-row overflow-hidden">
+          {/* Mobile header - only shows on mobile */}
+          <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
 
-        {/* Sidebar */}
-        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+          {/* Sidebar */}
+          <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-        {/* Main content */}
-        <main className="flex-1 overflow-auto bg-gray-50">
-          <div className="p-4 sm:p-6">{children}</div>
-        </main>
-      </div>
+          {/* Main content */}
+          <main className="flex-1 overflow-auto bg-gray-50">
+            <div className="p-4 sm:p-6">{children}</div>
+          </main>
+        </div>
+      </ToastProvider>
     </AuthProvider>
   );
 }

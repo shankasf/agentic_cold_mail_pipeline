@@ -160,11 +160,12 @@ model Campaign {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  businesses  Business[]
-  uploads     Upload[]
-  leads       Lead[]
-  leadColumns LeadColumn[]
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businesses      Business[]
+  uploads         Upload[]
+  leads           Lead[]
+  leadColumns     LeadColumn[]
+  businessColumns BusinessColumn[]
 
   @@index([userId])
   @@index([status])
@@ -222,6 +223,13 @@ model Business {
   website       String?
   industryGuess String?  @map("industry_guess")
   location      String?
+
+  // Dynamic columns - stores ALL extra data from imports for AI to use
+  customData    Json     @default("{}") @map("custom_data") // { columnName: value, ... }
+
+  // AI enrichment data - gathered by agents
+  enrichmentData Json    @default("{}") @map("enrichment_data") // { painPoints: [], insights: [], etc. }
+
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
@@ -249,7 +257,13 @@ model Contact {
   email            String   @unique
   name             String?
   role             String?
+  phone            String?  // Contact phone number
+  linkedinUrl      String?  @map("linkedin_url") // LinkedIn profile
   sourceConfidence Int      @default(0) @map("source_confidence")
+
+  // Dynamic columns - stores ALL extra contact data from imports for AI to use
+  customData       Json     @default("{}") @map("custom_data") // { columnName: value, ... }
+
   createdAt        DateTime @default(now()) @map("created_at")
 
   business      Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
@@ -810,4 +824,129 @@ model LeadColumn {
   @@unique([campaignId, key])
   @@index([campaignId])
   @@map("lead_columns")
+}
+
+// Business column definitions - tracks all custom columns imported for businesses
+model BusinessColumn {
+  id          String   @id @default(uuid())
+  campaignId  String   @map("campaign_id")
+  name        String   // Original column name from import
+  key         String   // Normalized key in customData JSON
+  mappedTo    String?  @map("mapped_to") // If mapped to standard field: name, website, industry, location, contact_email, contact_name, contact_role
+  type        String   @default("text") // text, number, date, url, email
+  sampleValues Json    @default("[]") @map("sample_values") // First 3 values for preview
+  aiHint      String?  @map("ai_hint") // AI-generated description of what this column contains
+  orderIndex  Int      @default(0) @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, key])
+  @@index([campaignId])
+  @@map("business_columns")
+}
+
+// =============================================================================
+// REPUTATION & METRICS TRACKING
+// =============================================================================
+
+// Daily metrics snapshot for identities (for 30-day moving average)
+model IdentityDailyMetrics {
+  id            String   @id @default(uuid())
+  identityId    String   @map("identity_id")
+  date          DateTime @db.Date
+
+  // Sending metrics
+  sent          Int      @default(0)
+  delivered     Int      @default(0)
+  bounced       Int      @default(0)
+  complained    Int      @default(0)
+  rejected      Int      @default(0)
+
+  // Engagement metrics
+  opened        Int      @default(0)
+  clicked       Int      @default(0)
+  replied       Int      @default(0)
+  unsubscribed  Int      @default(0)
+
+  // Calculated rates (stored for quick queries)
+  bounceRate    Float    @default(0) @map("bounce_rate")
+  complaintRate Float    @default(0) @map("complaint_rate")
+  openRate      Float    @default(0) @map("open_rate")
+  clickRate     Float    @default(0) @map("click_rate")
+  replyRate     Float    @default(0) @map("reply_rate")
+
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([identityId, date])
+  @@index([identityId])
+  @@index([date])
+  @@map("identity_daily_metrics")
+}
+
+// Reputation alerts history
+model ReputationAlert {
+  id            String   @id @default(uuid())
+  identityId    String?  @map("identity_id") // null for system-wide alerts
+  alertType     String   @map("alert_type") // bounce_rate, complaint_rate, warmup_pause, etc.
+  severity      String   // warning, critical
+  message       String
+  value         Float    // The metric value that triggered the alert
+  threshold     Float    // The threshold that was exceeded
+
+  // Status
+  isResolved    Boolean  @default(false) @map("is_resolved")
+  resolvedAt    DateTime? @map("resolved_at")
+  resolvedBy    String?  @map("resolved_by") // User ID who resolved
+
+  // Metadata
+  metadata      Json     @default("{}")
+
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([identityId])
+  @@index([alertType])
+  @@index([createdAt])
+  @@index([isResolved])
+  @@map("reputation_alerts")
+}
+
+// System-wide daily metrics (aggregate across all identities)
+model SystemDailyMetrics {
+  id            String   @id @default(uuid())
+  date          DateTime @db.Date @unique
+
+  // Aggregate metrics
+  totalSent     Int      @default(0) @map("total_sent")
+  totalDelivered Int     @default(0) @map("total_delivered")
+  totalBounced  Int      @default(0) @map("total_bounced")
+  totalComplaints Int    @default(0) @map("total_complaints")
+  totalOpened   Int      @default(0) @map("total_opened")
+  totalClicked  Int      @default(0) @map("total_clicked")
+  totalReplied  Int      @default(0) @map("total_replied")
+
+  // Rates
+  overallBounceRate    Float @default(0) @map("overall_bounce_rate")
+  overallComplaintRate Float @default(0) @map("overall_complaint_rate")
+  overallOpenRate      Float @default(0) @map("overall_open_rate")
+  overallClickRate     Float @default(0) @map("overall_click_rate")
+  overallReplyRate     Float @default(0) @map("overall_reply_rate")
+
+  // Active identities
+  activeIdentities Int   @default(0) @map("active_identities")
+  pausedIdentities Int   @default(0) @map("paused_identities")
+
+  // AI service metrics
+  aiCalls       Int      @default(0) @map("ai_calls")
+  aiErrors      Int      @default(0) @map("ai_errors")
+  aiTokensUsed  Int      @default(0) @map("ai_tokens_used")
+  avgAiLatencyMs Int     @default(0) @map("avg_ai_latency_ms")
+
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([date])
+  @@map("system_daily_metrics")
 }

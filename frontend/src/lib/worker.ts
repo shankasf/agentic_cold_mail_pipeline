@@ -7,7 +7,7 @@ import Redis from 'ioredis';
 import { PrismaClient, SESIdentityStatus } from '@prisma/client';
 import { parseFile } from './parsers';
 import { sendEmail } from './email-sender';
-import { getWarmupLimit, sendEmail as sendSESEmail } from './ses';
+import { getWarmupLimit, calculateAdaptiveWarmupLimit, sendEmail as sendSESEmail } from './ses';
 import { initRepeatableJobs, QUEUE_NAMES } from './queue';
 import { createWorkerLogger, logger as baseLogger } from './logger';
 import fs from 'fs/promises';
@@ -132,7 +132,9 @@ const fileParseWorker = new Worker(
   { connection: redis, concurrency: 2 }
 );
 
-// Email Send Worker
+// Email Send Worker - HIGH concurrency for IO-bound SES API calls
+// Optimized: 100 concurrent workers (up from 5) for parallel email sending
+// Rate limited at queue level to 14/sec for SES compliance
 const emailSendWorker = new Worker(
   QUEUE_NAMES.EMAIL_SEND,
   async (job: Job) => {
@@ -150,7 +152,14 @@ const emailSendWorker = new Worker(
     logger.info('Email sent successfully', { emailDraftId });
     return result;
   },
-  { connection: redis, concurrency: 5 }
+  {
+    connection: redis,
+    concurrency: 100,  // UP from 5 - IO-bound operations benefit from high concurrency
+    limiter: {
+      max: 14,         // SES rate limit: 14 emails/second
+      duration: 1000,  // Per second
+    },
+  }
 );
 
 // Export Worker
@@ -200,18 +209,41 @@ const sesWarmupWorker = new Worker(
         // Calculate new warmup day (increment if warmup is enabled)
         const newWarmupDay = identity.warmupEnabled ? identity.warmupDay + 1 : identity.warmupDay;
 
-        // Get the new daily limit based on warmup day
-        const newDailyLimit = identity.warmupEnabled
-          ? getWarmupLimit(newWarmupDay)
-          : identity.dailyLimit;
+        // Use adaptive warmup to calculate the daily limit based on performance
+        let newDailyLimit: number;
+        let adaptiveAction = 'normal';
+
+        if (identity.warmupEnabled) {
+          const adaptive = await calculateAdaptiveWarmupLimit(identity.id, newWarmupDay);
+          newDailyLimit = adaptive.adaptiveLimit;
+          adaptiveAction = adaptive.action;
+
+          logger.info('Adaptive warmup calculation', {
+            emailAddress: identity.emailAddress,
+            warmupDay: newWarmupDay,
+            baseLimit: adaptive.baseLimit,
+            adaptiveLimit: adaptive.adaptiveLimit,
+            action: adaptive.action,
+            reason: adaptive.reason,
+            metrics: adaptive.metrics,
+          });
+        } else {
+          newDailyLimit = identity.dailyLimit;
+        }
 
         // Update status based on warmup progress
         let newStatus = identity.status;
         if (identity.warmupEnabled && identity.status === 'VERIFIED') {
           newStatus = 'WARMING';
-        } else if (identity.warmupEnabled && newWarmupDay >= 63) {
-          // Warmup complete after 63 days
+        } else if (identity.warmupEnabled && newWarmupDay >= 63 && adaptiveAction !== 'pause') {
+          // Warmup complete after 63 days (unless paused)
           newStatus = 'ACTIVE';
+        } else if (adaptiveAction === 'pause') {
+          // Pause the identity if adaptive warmup recommends it
+          newStatus = 'PAUSED';
+          logger.warn('Identity paused due to poor performance', {
+            emailAddress: identity.emailAddress,
+          });
         }
 
         // Reset daily counters and update warmup progression
@@ -230,6 +262,7 @@ const sesWarmupWorker = new Worker(
           warmupDay: newWarmupDay,
           dailyLimit: newDailyLimit,
           status: newStatus,
+          adaptiveAction,
         });
       } catch (error) {
         logger.error('Error updating identity', error, { emailAddress: identity.emailAddress });
@@ -242,6 +275,7 @@ const sesWarmupWorker = new Worker(
 );
 
 // Sequence Processor Worker - processes pending sequence steps
+// Optimized: 10 concurrent workers (up from 2) for parallel sequence processing
 const sequenceProcessorWorker = new Worker(
   QUEUE_NAMES.SEQUENCE_PROCESSOR,
   async (job: Job) => {
@@ -293,6 +327,7 @@ const sequenceProcessorWorker = new Worker(
       }
 
       // Get pending lead steps that are ready to send
+      // Optimized: increased batch size from 50 to 500 for higher throughput
       const pendingSteps = await prisma.sequenceLeadStep.findMany({
         where: {
           sequenceLead: {
@@ -313,7 +348,7 @@ const sequenceProcessorWorker = new Worker(
           },
           step: true,
         },
-        take: 50, // Process in batches
+        take: 500, // UP from 50 - process larger batches for efficiency
       });
 
       logger.debug('Found pending steps', { sequenceId: sequence.id, count: pendingSteps.length });
@@ -405,7 +440,7 @@ const sequenceProcessorWorker = new Worker(
     logger.info('Sequence processing completed', { processedCount: totalProcessed });
     return { processedCount: totalProcessed };
   },
-  { connection: redis, concurrency: 2 }
+  { connection: redis, concurrency: 10 }  // UP from 2 - parallel sequence processing
 );
 
 // Helper function to personalize templates with contact/business data
