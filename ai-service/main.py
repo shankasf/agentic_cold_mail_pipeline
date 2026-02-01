@@ -17,7 +17,7 @@ from typing import Any, Optional
 import uvicorn
 
 import config
-from pipeline import run_pipeline, recheck_compliance
+from pipeline import run_pipeline, recheck_compliance, generate_email_for_contact, generate_follow_up_email
 from email_agents import map_columns, get_mapping_dict, generate_templates
 
 # Redis for progress updates
@@ -120,6 +120,52 @@ class GenerateTemplatesRequest(BaseModel):
     purpose: str
     documentContent: str | None = None
     contextHints: dict | None = None
+
+
+class GenerateEmailForContactRequest(BaseModel):
+    business: dict
+    contact: dict
+    evidence: list[dict] | None = None
+    industryPlaybook: dict | None = None
+
+
+class GenerateEmailForContactResponse(BaseModel):
+    success: bool
+    business_id: str | None = None
+    contact_id: str | None = None
+    subject: str | None = None
+    body_text: str | None = None
+    footer_text: str | None = None
+    personalization_tokens: dict | None = None
+    confidence_score: int | None = None
+    deliverability_score: int | None = None
+    spam_flags: list[str] | None = None
+    status: str | None = None
+    error: str | None = None
+
+
+class GenerateFollowUpRequest(BaseModel):
+    business: dict
+    contact: dict
+    previous_email: dict  # {subject: str, bodyText: str}
+    industry_playbook: dict | None = None
+
+
+class GenerateFollowUpResponse(BaseModel):
+    success: bool
+    business_id: str | None = None
+    contact_id: str | None = None
+    subject: str | None = None
+    body_text: str | None = None
+    footer_text: str | None = None
+    personalization_tokens: dict | None = None
+    confidence_score: int | None = None
+    deliverability_score: int | None = None
+    spam_flags: list[str] | None = None
+    status: str | None = None
+    error: str | None = None
+    is_follow_up: bool = True
+    sequence_number: int = 2
 
 
 class GeneratedTemplateItem(BaseModel):
@@ -294,6 +340,74 @@ async def generate_templates_endpoint(request: GenerateTemplatesRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Template generation error: {str(e)}"
+        )
+
+
+# Generate email for existing business/contact
+@app.post("/generate-email-for-contact", response_model=GenerateEmailForContactResponse)
+async def generate_email_for_contact_endpoint(request: GenerateEmailForContactRequest):
+    """
+    Generate a single email for an existing business/contact pair.
+    Skips entity extraction - use this when you already have business and contact data.
+    """
+    if not request.business:
+        raise HTTPException(status_code=400, detail="Business data is required")
+    if not request.contact:
+        raise HTTPException(status_code=400, detail="Contact data is required")
+    if not request.contact.get('email'):
+        raise HTTPException(status_code=400, detail="Contact email is required")
+
+    try:
+        result = await generate_email_for_contact(
+            business=request.business,
+            contact=request.contact,
+            evidence=request.evidence,
+            industry_playbook=request.industryPlaybook,
+        )
+
+        return GenerateEmailForContactResponse(**result)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Email generation error: {str(e)}"
+        )
+
+
+# Generate follow-up email
+@app.post("/generate-follow-up", response_model=GenerateFollowUpResponse)
+async def generate_follow_up_endpoint(request: GenerateFollowUpRequest):
+    """
+    Generate a follow-up email based on a previous email.
+    Skips email validation and creates a contextually relevant follow-up.
+    """
+    if not request.business:
+        raise HTTPException(status_code=400, detail="Business data is required")
+    if not request.contact:
+        raise HTTPException(status_code=400, detail="Contact data is required")
+    if not request.contact.get('email'):
+        raise HTTPException(status_code=400, detail="Contact email is required")
+    if not request.previous_email:
+        raise HTTPException(status_code=400, detail="Previous email data is required")
+
+    try:
+        result = await generate_follow_up_email(
+            business=request.business,
+            contact=request.contact,
+            previous_email=request.previous_email,
+            industry_playbook=request.industry_playbook,
+        )
+
+        return GenerateFollowUpResponse(
+            **result,
+            is_follow_up=True,
+            sequence_number=2,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Follow-up generation error: {str(e)}"
         )
 
 

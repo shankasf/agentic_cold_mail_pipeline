@@ -1,6 +1,7 @@
 """
 Multi-Agent Pipeline Orchestrator
 Coordinates all agents to generate emails from parsed chunks.
+Auto-regenerates emails that fail compliance (score < 85).
 """
 import asyncio
 from typing import Any, Callable, Awaitable
@@ -13,6 +14,10 @@ from email_agents import (
     make_decision,
 )
 import config
+
+# Compliance threshold - emails must score 85+ to pass
+COMPLIANCE_THRESHOLD = 85
+MAX_REGENERATION_ATTEMPTS = 3
 
 
 def compute_confidence_score(facts_used: list[dict], entity_confidence: int) -> int:
@@ -131,22 +136,44 @@ async def run_pipeline(
                         # Compute entity confidence (average of business and contact)
                         entity_confidence = (business.confidence + contact.confidence) // 2
 
-                        # Step 3: Write email
-                        await report_progress(f"✍️ Agent 3/5: EmailWriter - Writing email for {contact.email} ({contact_idx}/{total_contacts})")
-                        email = await write_email(
-                            business=business.model_dump(),
-                            contact=contact.model_dump(),
-                            facts_used=[f.model_dump() for f in analysis.facts_used],
-                            pain_point=analysis.inferred_pain_point,
-                            industry_playbook=playbook,
-                        )
+                        # Email generation with auto-regeneration on compliance failure
+                        email = None
+                        compliance = None
+                        attempt = 0
 
-                        # Step 4: Check compliance
-                        await report_progress(f"🛡️ Agent 4/5: ComplianceChecker - Checking spam & compliance...")
-                        compliance = await check_compliance(
-                            subject=email.subject,
-                            body_text=email.body_text,
-                        )
+                        while attempt < MAX_REGENERATION_ATTEMPTS:
+                            attempt += 1
+
+                            # Step 3: Write email
+                            if attempt == 1:
+                                await report_progress(f"✍️ Agent 3/5: EmailWriter - Writing email for {contact.email} ({contact_idx}/{total_contacts})")
+                            else:
+                                await report_progress(f"🔄 Regenerating email (attempt {attempt}/{MAX_REGENERATION_ATTEMPTS})...")
+
+                            email = await write_email(
+                                business=business.model_dump(),
+                                contact=contact.model_dump(),
+                                facts_used=[f.model_dump() for f in analysis.facts_used],
+                                pain_point=analysis.inferred_pain_point,
+                                industry_playbook=playbook,
+                            )
+
+                            # Step 4: Check compliance
+                            await report_progress(f"🛡️ Agent 4/5: ComplianceChecker - Checking spam & compliance...")
+                            compliance = await check_compliance(
+                                subject=email.subject,
+                                body_text=email.body_text,
+                            )
+
+                            # Check if email passes compliance threshold
+                            if compliance.deliverability_score >= COMPLIANCE_THRESHOLD:
+                                await report_progress(f"✅ Email passed compliance (score: {compliance.deliverability_score})")
+                                break
+                            else:
+                                await report_progress(f"⚠️ Email failed compliance (score: {compliance.deliverability_score}/{COMPLIANCE_THRESHOLD}). Issues: {compliance.spam_flags[:3]}")
+
+                                if attempt >= MAX_REGENERATION_ATTEMPTS:
+                                    await report_progress(f"❌ Max regeneration attempts reached. Using best attempt.")
 
                         # Compute confidence score
                         confidence_score = compute_confidence_score(
@@ -174,6 +201,7 @@ async def run_pipeline(
                                 'facts_used': [f.model_dump() for f in analysis.facts_used],
                                 'pain_point': analysis.inferred_pain_point,
                                 'industry': business.industry_guess,
+                                'regeneration_attempts': attempt,
                             },
                             confidence_score=confidence_score,
                             deliverability_score=compliance.deliverability_score,
@@ -182,7 +210,7 @@ async def run_pipeline(
                         )
 
                         results['emails'].append(email_result.model_dump())
-                        await report_progress(f"✅ Email #{len(results['emails'])} generated: score={confidence_score}, status={decision.final_status}")
+                        await report_progress(f"✅ Email #{len(results['emails'])} generated: score={confidence_score}, deliverability={compliance.deliverability_score}, status={decision.final_status}")
 
                     except Exception as e:
                         error_msg = f"Error processing contact {contact.email}: {str(e)}"
@@ -210,3 +238,275 @@ async def recheck_compliance(subject: str, body_text: str) -> dict:
     """
     compliance = await check_compliance(subject, body_text)
     return compliance.model_dump()
+
+
+async def generate_email_for_contact(
+    business: dict,
+    contact: dict,
+    evidence: list[dict] | None = None,
+    industry_playbook: dict | None = None,
+) -> dict:
+    """
+    Generate a single email for an existing business/contact pair.
+    Skips entity extraction and goes directly to email writing.
+
+    Args:
+        business: Business data {id, canonical_name, website, industry_guess, location}
+        contact: Contact data {id, email, name, role}
+        evidence: Optional list of evidence/facts about the business
+        industry_playbook: Optional industry-specific playbook
+
+    Returns:
+        Dictionary with email data or error
+    """
+    try:
+        # Build facts from evidence
+        facts_used = []
+        if evidence:
+            for ev in evidence:
+                facts_used.append({
+                    'type': ev.get('evidenceType', ev.get('type', 'OTHER')),
+                    'value': ev.get('extractedValue', ev.get('value', '')),
+                    'chunk_id': ev.get('id', ''),
+                    'confidence': ev.get('confidence', 80),
+                })
+
+        # If no evidence, create basic fact from business info
+        if not facts_used:
+            if business.get('industry_guess'):
+                facts_used.append({
+                    'type': 'INDUSTRY',
+                    'value': business['industry_guess'],
+                    'chunk_id': '',
+                    'confidence': 70,
+                })
+            if business.get('location'):
+                facts_used.append({
+                    'type': 'LOCATION',
+                    'value': business['location'],
+                    'chunk_id': '',
+                    'confidence': 70,
+                })
+            # Always add company name as a fact
+            facts_used.append({
+                'type': 'OTHER',
+                'value': f"Company: {business.get('canonical_name', business.get('canonicalName', 'Unknown'))}",
+                'chunk_id': '',
+                'confidence': 100,
+            })
+
+        # Normalize business data for email writer
+        normalized_business = {
+            'canonical_name': business.get('canonical_name', business.get('canonicalName', '')),
+            'website': business.get('website'),
+            'industry_guess': business.get('industry_guess', business.get('industryGuess')),
+            'location': business.get('location'),
+        }
+
+        # Normalize contact data
+        normalized_contact = {
+            'email': contact.get('email', ''),
+            'name': contact.get('name'),
+            'role': contact.get('role'),
+        }
+
+        # Email generation with auto-regeneration on compliance failure
+        email = None
+        compliance = None
+        attempt = 0
+
+        while attempt < MAX_REGENERATION_ATTEMPTS:
+            attempt += 1
+
+            # Write email
+            email = await write_email(
+                business=normalized_business,
+                contact=normalized_contact,
+                facts_used=facts_used,
+                pain_point=None,
+                industry_playbook=industry_playbook,
+            )
+
+            # Check compliance
+            compliance = await check_compliance(
+                subject=email.subject,
+                body_text=email.body_text,
+            )
+
+            # Check if email passes compliance threshold
+            if compliance.deliverability_score >= COMPLIANCE_THRESHOLD:
+                break
+            elif attempt >= MAX_REGENERATION_ATTEMPTS:
+                # Use best attempt even if it failed
+                break
+
+        # Compute confidence score (simpler version for existing contacts)
+        avg_fact_confidence = sum(f['confidence'] for f in facts_used) / len(facts_used) if facts_used else 70
+        confidence_score = int(avg_fact_confidence * 0.8 + 20)  # Base 20 for existing verified contact
+
+        # Gatekeeper decision
+        decision = await make_decision(
+            confidence_score=confidence_score,
+            deliverability_score=compliance.deliverability_score,
+            spam_flags=compliance.spam_flags,
+            analyzer_needs_review=False,
+        )
+
+        return {
+            'success': True,
+            'business_id': business.get('id', ''),
+            'contact_id': contact.get('id', contact.get('email', '')),
+            'subject': email.subject,
+            'body_text': email.body_text,
+            'footer_text': compliance.footer_text,
+            'personalization_tokens': {
+                'facts_used': facts_used,
+                'industry': normalized_business.get('industry_guess'),
+                'regeneration_attempts': attempt,
+            },
+            'confidence_score': confidence_score,
+            'deliverability_score': compliance.deliverability_score,
+            'spam_flags': compliance.spam_flags,
+            'status': decision.final_status,
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'business_id': business.get('id', ''),
+            'contact_id': contact.get('id', contact.get('email', '')),
+        }
+
+
+async def generate_follow_up_email(
+    business: dict,
+    contact: dict,
+    previous_email: dict,
+    industry_playbook: dict | None = None,
+) -> dict:
+    """
+    Generate a follow-up email based on a previous email.
+    Skips email validation - designed for follow-ups to existing contacts.
+
+    Args:
+        business: Business data {id, canonical_name, website, industry_guess, location}
+        contact: Contact data {id, email, name, role}
+        previous_email: Previous email {subject, bodyText}
+        industry_playbook: Optional industry-specific playbook
+
+    Returns:
+        Dictionary with email data or error
+    """
+    try:
+        # Normalize business data
+        normalized_business = {
+            'canonical_name': business.get('canonical_name', business.get('canonicalName', '')),
+            'website': business.get('website'),
+            'industry_guess': business.get('industry_guess', business.get('industryGuess')),
+            'location': business.get('location'),
+        }
+
+        # Normalize contact data
+        normalized_contact = {
+            'email': contact.get('email', ''),
+            'name': contact.get('name'),
+            'role': contact.get('role'),
+        }
+
+        # Build context facts from previous email
+        facts_used = [
+            {
+                'type': 'FOLLOW_UP_CONTEXT',
+                'value': f"Previous subject: {previous_email.get('subject', '')}",
+                'chunk_id': '',
+                'confidence': 100,
+            },
+            {
+                'type': 'OTHER',
+                'value': f"Company: {normalized_business.get('canonical_name', 'Unknown')}",
+                'chunk_id': '',
+                'confidence': 100,
+            },
+        ]
+
+        if normalized_business.get('industry_guess'):
+            facts_used.append({
+                'type': 'INDUSTRY',
+                'value': normalized_business['industry_guess'],
+                'chunk_id': '',
+                'confidence': 80,
+            })
+
+        # Generate follow-up email with modified pain point for follow-up context
+        follow_up_context = f"This is a follow-up to a previous email with subject: '{previous_email.get('subject', '')}'. Create a brief, friendly follow-up that references the previous outreach."
+
+        # Email generation with auto-regeneration on compliance failure
+        email = None
+        compliance = None
+        attempt = 0
+
+        while attempt < MAX_REGENERATION_ATTEMPTS:
+            attempt += 1
+
+            # Write follow-up email
+            email = await write_email(
+                business=normalized_business,
+                contact=normalized_contact,
+                facts_used=facts_used,
+                pain_point=follow_up_context,
+                industry_playbook=industry_playbook,
+            )
+
+            # Check compliance (no email validation for follow-ups)
+            compliance = await check_compliance(
+                subject=email.subject,
+                body_text=email.body_text,
+            )
+
+            # Check if email passes compliance threshold
+            if compliance.deliverability_score >= COMPLIANCE_THRESHOLD:
+                break
+            elif attempt >= MAX_REGENERATION_ATTEMPTS:
+                # Use best attempt even if it failed
+                break
+
+        # Compute confidence score (higher base for follow-ups to existing contacts)
+        avg_fact_confidence = sum(f['confidence'] for f in facts_used) / len(facts_used) if facts_used else 80
+        confidence_score = int(avg_fact_confidence * 0.7 + 30)  # Higher base (30) for follow-up
+
+        # Gatekeeper decision
+        decision = await make_decision(
+            confidence_score=confidence_score,
+            deliverability_score=compliance.deliverability_score,
+            spam_flags=compliance.spam_flags,
+            analyzer_needs_review=False,
+        )
+
+        return {
+            'success': True,
+            'business_id': business.get('id', ''),
+            'contact_id': contact.get('id', contact.get('email', '')),
+            'subject': email.subject,
+            'body_text': email.body_text,
+            'footer_text': compliance.footer_text,
+            'personalization_tokens': {
+                'facts_used': facts_used,
+                'industry': normalized_business.get('industry_guess'),
+                'regeneration_attempts': attempt,
+                'is_follow_up': True,
+                'previous_subject': previous_email.get('subject', ''),
+            },
+            'confidence_score': confidence_score,
+            'deliverability_score': compliance.deliverability_score,
+            'spam_flags': compliance.spam_flags,
+            'status': decision.final_status,
+        }
+
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+            'business_id': business.get('id', ''),
+            'contact_id': contact.get('id', contact.get('email', '')),
+        }

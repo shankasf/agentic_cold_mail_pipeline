@@ -48,12 +48,110 @@ export { getRedis as redis, getRedisPub as redisPub, getRedisSub as redisSub };
 // Channel for upload progress updates
 export const UPLOAD_PROGRESS_CHANNEL = 'upload:progress';
 
+// Channel for email event updates
+export const EMAIL_EVENTS_CHANNEL = 'email:events';
+
+// Channel for email generation progress (per job)
+export const EMAIL_GENERATION_CHANNEL_PREFIX = 'email:generation:';
+
 // Publish upload progress
 export async function publishUploadProgress(uploadId: string, progress: string) {
   await getRedisPub().publish(
     UPLOAD_PROGRESS_CHANNEL,
     JSON.stringify({ uploadId, progress, timestamp: Date.now() })
   );
+}
+
+// Publish email event for real-time updates
+export async function publishEmailEvent(
+  emailId: string,
+  eventType: string,
+  contactEmail: string,
+  businessName?: string
+) {
+  await getRedisPub().publish(
+    EMAIL_EVENTS_CHANNEL,
+    JSON.stringify({
+      type: 'email_event',
+      emailId,
+      eventType,
+      contactEmail,
+      businessName,
+      timestamp: Date.now(),
+    })
+  );
+}
+
+// Export getRedisSub for SSE endpoint
+export { getRedisSub };
+
+// Publish email generation progress
+export async function publishEmailGenerationProgress(
+  jobId: string,
+  data: {
+    type: string;
+    message?: string;
+    step?: number;
+    stats?: {
+      total?: number;
+      completed?: number;
+      successful?: number;
+      failed?: number;
+      currentEmail?: string;
+      currentBusiness?: string;
+    };
+    status?: string;
+    details?: string;
+    logType?: 'info' | 'success' | 'error' | 'warning' | 'step';
+    completedEmails?: string[];
+  }
+) {
+  await getRedisPub().publish(
+    `${EMAIL_GENERATION_CHANNEL_PREFIX}${jobId}`,
+    JSON.stringify({
+      ...data,
+      timestamp: Date.now(),
+    })
+  );
+}
+
+// Get email generation job data
+export async function getEmailGenerationJob(jobId: string) {
+  const data = await getRedis().get(`email:job:${jobId}`);
+  return data ? JSON.parse(data) : null;
+}
+
+// Set email generation job data
+export async function setEmailGenerationJob(
+  jobId: string,
+  data: {
+    campaignId: string;
+    leadIds: string[];
+    mode: 'initial' | 'followup';
+    status: 'running' | 'completed' | 'cancelled' | 'error';
+    stats: {
+      total: number;
+      completed: number;
+      successful: number;
+      failed: number;
+    };
+    completedEmails: string[];
+  },
+  ttlSeconds = 3600 // 1 hour
+) {
+  await getRedis().setex(`email:job:${jobId}`, ttlSeconds, JSON.stringify(data));
+}
+
+// Update email generation job status
+export async function updateEmailGenerationJobStatus(
+  jobId: string,
+  status: 'running' | 'completed' | 'cancelled' | 'error'
+) {
+  const job = await getEmailGenerationJob(jobId);
+  if (job) {
+    job.status = status;
+    await setEmailGenerationJob(jobId, job);
+  }
 }
 
 // =============================================================================
