@@ -208,11 +208,34 @@ A production-ready admin dashboard for generating personalized cold emails using
 1. **Agentic Pipeline**: Full multi-agent generation with personalization
 2. **Template Pipeline**: Fast bulk emails using predefined templates with variable substitution
 
+### Campaign & Lead Management
+- **Campaign Management**: Create, organize, and track email campaigns
+- **Lead Management**: Import leads via CSV, manage lead lifecycle, bulk actions
+- **AI-Powered Lead Enrichment**: Enrich lead data using AI prompts
+- **Lead Tagging**: Organize leads with custom tags for segmentation
+
+### Multi-Identity Email Sending
+- **SES Identity Management**: Configure multiple sender identities/inboxes
+- **Round-Robin Distribution**: Evenly distribute emails across all SES identities
+- **Protected Identities**: Mark certain identities as protected (reply-only)
+- **Per-Identity Daily Limits**: Configure daily sending caps per identity
+- **Approve & Send Now**: Instantly approve and send AI-generated follow-ups with even distribution
+
+### Real-Time AI Generation
+- **SSE Streaming**: Server-Sent Events for real-time email generation progress
+- **Live Progress Modal**: Visual progress indicators during AI email generation
+- **Redis Pub/Sub**: Real-time progress updates between API and frontend
+
 ### Performance Optimizations
 - **Database Indexes**: 20+ indexes for fast queries on businesses, contacts, emails, and events
 - **Redis Caching**: Analytics cached for 5 minutes (90% DB load reduction)
 - **SWR Data Fetching**: Request deduplication and stale-while-revalidate pattern
 - **HTTP Cache Headers**: Browser-level caching on all major endpoints
+
+### Comprehensive Logging & Error Handling
+- **Structured Logging**: Request-scoped logging with correlation IDs
+- **Prisma Error Mapping**: User-friendly error messages for database errors
+- **API Handler Wrapper**: Consistent error handling across all API routes
 
 ### Core Features
 - **File Ingestion**: Supports TXT, CSV, XLSX, JSON, TSV, and PDF files
@@ -220,6 +243,7 @@ A production-ready admin dashboard for generating personalized cold emails using
 - **Evidence-First Design**: All personalization is traceable to source data
 - **Admin Dashboard**: Upload files, review emails, approve, export, and send
 - **Email Threading**: Track conversations and follow-up emails
+- **Unified Inbox (Unibox)**: View all inbound/outbound emails in one place
 - **AWS SES Integration**: SMTP-based email sending with bounce/complaint handling
 - **Background Workers**: BullMQ-powered job processing
 - **Role-Based Access**: Admin and Sales Rep roles with appropriate permissions
@@ -235,10 +259,11 @@ A production-ready admin dashboard for generating personalized cold emails using
 | **Caching** | Redis (analytics, session, pub/sub) |
 | **Queue** | BullMQ + Redis |
 | **AI** | OpenAI Agents SDK (Python) |
-| **Email** | AWS SES SMTP |
+| **Email** | AWS SES SMTP + Multi-Identity Support |
 | **Auth** | JWT (jose) + bcrypt |
 | **Testing** | Vitest + Testing Library |
-| **Infrastructure** | Kubernetes (K3s), Traefik Ingress |
+| **CI/CD** | GitHub Actions (lint, typecheck, test, deploy) |
+| **Infrastructure** | Kubernetes (K3s), Traefik Ingress, Docker |
 
 ## Project Structure
 
@@ -246,23 +271,48 @@ A production-ready admin dashboard for generating personalized cold emails using
 email_marketing/
 ├── .env                      # Environment variables
 ├── .github/                  # CI/CD workflows
+│   └── workflows/
+│       ├── ci.yml            # Lint, typecheck, test
+│       └── cd.yml            # Build and deploy
 ├── frontend/                 # Next.js application
 │   ├── package.json
+│   ├── Dockerfile            # Production Docker image
 │   ├── prisma/
 │   │   ├── schema.prisma     # Database schema with indexes
 │   │   └── migrations/       # Database migrations
 │   └── src/
 │       ├── app/
 │       │   ├── api/          # API routes
+│       │   │   ├── campaigns/    # Campaign management
+│       │   │   ├── leads/        # Lead management
+│       │   │   ├── identities/   # SES identity management
+│       │   │   └── emails/       # Email operations
+│       │   │       ├── queue-distributed/  # Even distribution
+│       │   │       ├── follow-up/          # AI follow-ups
+│       │   │       └── threads/            # Email threads
 │       │   ├── dashboard/    # Dashboard pages
+│       │   │   ├── campaigns/    # Campaign views
+│       │   │   ├── leads/        # Lead management UI
+│       │   │   ├── identities/   # SES identity UI
+│       │   │   └── unibox/       # Unified inbox
 │       │   └── login/        # Auth pages
 │       ├── components/       # React components
+│       │   └── leads/        # Lead-specific components
+│       │       ├── EmailGenerationModal.tsx  # AI generation modal
+│       │       ├── BulkActionsMenu.tsx       # Bulk operations
+│       │       └── LeadDetailPanel.tsx       # Lead details
 │       └── lib/
 │           ├── prisma.ts     # Database client
-│           ├── redis.ts      # Redis + caching utilities
+│           ├── redis.ts      # Redis + pub/sub for SSE
 │           ├── swr.ts        # SWR hooks for data fetching
 │           ├── queue.ts      # BullMQ job queues
-│           └── worker.ts     # Background worker
+│           ├── worker.ts     # Background worker
+│           ├── email-sender.ts   # Email distribution logic
+│           ├── ses.ts        # AWS SES integration
+│           ├── api-utils.ts  # API handler wrapper
+│           ├── errors.ts     # Error handling utilities
+│           ├── logger.ts     # Structured logging
+│           └── auth-utils.ts # Auth utilities
 └── ai-service/               # Python AI service
     ├── requirements.txt
     ├── main.py               # FastAPI server
@@ -395,6 +445,8 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 
 ### Frontend API (Next.js)
 
+#### Core Endpoints
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/uploads` | POST | Upload a file |
@@ -407,6 +459,36 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 | `/api/exports/pdf/[id]` | GET | Export single email as PDF |
 | `/api/analytics` | GET | Dashboard analytics |
 | `/api/webhooks/ses` | POST | SES bounce/complaint webhook |
+
+#### Campaign & Lead Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/campaigns` | GET/POST | List/create campaigns |
+| `/api/campaigns/[id]` | GET/PATCH/DELETE | Campaign CRUD |
+| `/api/campaigns/[id]/leads` | GET | Get leads for campaign |
+| `/api/campaigns/[id]/leads/generate-emails` | POST | Generate emails for leads |
+| `/api/leads` | GET/POST | List/create leads |
+| `/api/leads/[id]` | GET/PATCH/DELETE | Lead CRUD |
+| `/api/leads/import` | POST | Bulk import leads from CSV |
+| `/api/leads/bulk-update` | PATCH | Bulk update lead fields |
+
+#### SES Identity & Distribution Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/identities` | GET/POST | List/create SES identities |
+| `/api/identities/[id]` | PATCH/DELETE | Update/delete identity |
+| `/api/emails/queue-distributed` | POST | Queue emails with even distribution |
+| `/api/emails/queue-distributed` | GET | Get quota status for all identities |
+
+#### Real-Time & Streaming Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/emails/follow-up/ai-generate` | POST | Generate AI follow-up emails |
+| `/api/emails/follow-up/ai-generate/progress` | GET | SSE stream for generation progress |
+| `/api/emails/threads` | GET | Get email threads by business |
 
 ### AI Service API (FastAPI)
 
@@ -433,6 +515,94 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 - **Confidence Threshold**: 70% (emails below need review)
 - **Deliverability Threshold**: 70% (required for approval)
 - **Daily Sending Cap**: 100 emails/day
+
+## CI/CD Pipeline
+
+The project uses GitHub Actions for continuous integration and deployment.
+
+### Pipeline Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           CI/CD PIPELINE                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+  │   Push to   │────▶│     CI      │────▶│     CD      │────▶│   Deploy    │
+  │    main     │     │  (Checks)   │     │   (Build)   │     │   (K3s)     │
+  └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │  • ESLint       │
+                   │  • TypeScript   │
+                   │  • Vitest       │
+                   └─────────────────┘
+```
+
+### CI Workflow (`.github/workflows/ci.yml`)
+
+Runs on every push to `main` branch:
+
+| Step | Description |
+|------|-------------|
+| **Checkout** | Clone repository |
+| **Setup Node.js** | Install Node.js 20 |
+| **Install Dependencies** | `npm ci` with cached node_modules |
+| **ESLint** | Lint code with `npm run lint` |
+| **TypeScript** | Type check with `npx tsc --noEmit` |
+| **Vitest** | Run unit tests with `npm test` |
+
+### CD Workflow (`.github/workflows/cd.yml`)
+
+Runs after CI passes:
+
+| Step | Description |
+|------|-------------|
+| **Build Docker Image** | Build production Next.js image |
+| **Push to Registry** | Push to container registry |
+| **Deploy to K3s** | Rolling update deployment |
+| **Health Check** | Verify deployment is healthy |
+
+### Workflow Files
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
+      - run: npx tsc --noEmit
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+```
+
+### Branch Protection
+
+The `main` branch is protected with:
+- Required CI checks to pass
+- No direct pushes (PR required for team workflows)
+- Auto-deploy on merge to main
+
+---
 
 ## Production Deployment
 
@@ -510,10 +680,33 @@ pytest
 - SMTP credentials should have minimal permissions
 - Enable AWS SES bounce/complaint notifications
 
+## Recent Updates
+
+### v2.0 (February 2026)
+
+- **Campaign & Lead Management**: Full campaign lifecycle with lead import/export
+- **Multi-Identity Email Distribution**: Round-robin distribution across SES identities
+- **"Approve & Send Now" Feature**: Instantly send AI-generated follow-up emails
+- **Real-Time SSE Progress**: Live updates during AI email generation
+- **Unified Inbox (Unibox)**: View all email threads in one place
+- **Enhanced Error Handling**: Structured logging with request correlation IDs
+- **CI/CD Pipeline**: Automated linting, type checking, testing, and deployment
+- **Docker Support**: Production-ready Dockerfile for containerized deployment
+
+### v1.0 (Initial Release)
+
+- Multi-agent AI pipeline for email generation
+- Admin dashboard with approval workflow
+- AWS SES integration with bounce handling
+- File ingestion (CSV, XLSX, PDF, TXT)
+- Evidence-first personalization
+
+---
+
 ## License
 
 Proprietary - CallSphere
 
 ---
 
-Built with OpenAI Agents SDK, Next.js 14, and FastAPI | Deployed on Kubernetes (K3s)
+Built with OpenAI Agents SDK, Next.js 14, and FastAPI | Deployed on Kubernetes (K3s) | CI/CD via GitHub Actions
