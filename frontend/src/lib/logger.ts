@@ -113,17 +113,32 @@ function createLogEntry(
 
 // Redis publishing for real-time log streaming
 const LOGS_CHANNEL = 'service:logs';
+const LOGS_HISTORY_KEY = 'service:logs:history';
+const MAX_HISTORY_SIZE = 1000;
 
 async function publishToRedis(entry: LogEntry): Promise<void> {
   try {
-    const { redisPub } = await import('@/lib/redis');
-    const redis = redisPub();
-    await redis.publish(LOGS_CHANNEL, JSON.stringify({
+    // Use relative import for compatibility with both Next.js and worker contexts
+    const redisModule = await import('./redis');
+    const pubRedis = redisModule.redisPub();
+    const redis = redisModule.redis();
+
+    const logData = JSON.stringify({
       ...entry,
       metadata: entry.context,
-    }));
-  } catch {
-    // Silently fail - don't break logging if Redis is unavailable
+    });
+
+    // Publish to channel for real-time streaming
+    await pubRedis.publish(LOGS_CHANNEL, logData);
+
+    // Also store in history list for new connections
+    await redis.lpush(LOGS_HISTORY_KEY, logData);
+    await redis.ltrim(LOGS_HISTORY_KEY, 0, MAX_HISTORY_SIZE - 1);
+  } catch (e) {
+    // Log to console only in development
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[Logger] Failed to publish to Redis:', e);
+    }
   }
 }
 
