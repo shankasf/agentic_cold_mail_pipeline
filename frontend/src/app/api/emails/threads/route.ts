@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import {
   createApiHandler,
@@ -8,8 +8,9 @@ import {
 } from '@/lib/api-utils';
 
 // GET /api/emails/threads - Get email threads grouped by business
-export const GET = createApiHandler(
-  async (request: NextRequest, { logger }) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const GET = createApiHandler<any>(
+  async (request: NextRequest, { logger }): Promise<NextResponse> => {
     const searchParams = request.nextUrl.searchParams;
     const businessId = searchParams.get('businessId');
     const { page, limit, skip } = getPaginationParams(request);

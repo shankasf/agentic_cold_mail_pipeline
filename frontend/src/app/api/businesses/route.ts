@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getUserFilter, getUserIdForCreate } from '@/lib/auth-utils';
 import {
@@ -34,8 +34,9 @@ function applyCountFilters(
 }
 
 // GET /api/businesses - List businesses
-export const GET = createApiHandler(
-  async (request: NextRequest, { logger }) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const GET = createApiHandler<any>(
+  async (request: NextRequest, { logger }): Promise<NextResponse> => {
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search');
     const industry = searchParams.get('industry');

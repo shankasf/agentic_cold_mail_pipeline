@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { addEmailSendJob } from '@/lib/queue';
 import { startOfDay } from 'date-fns';
@@ -33,8 +33,9 @@ import {
  * 4. Updates each email with assigned identity
  * 5. Queues them for sending
  */
-export const POST = createApiHandler(
-  async (request: NextRequest, { logger }) => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const POST = createApiHandler<any>(
+  async (request: NextRequest, { logger }): Promise<NextResponse> => {
     const body = await parseJsonBody<{
       emailIds?: string[];
       approveFirst?: boolean;
@@ -137,6 +138,7 @@ export const POST = createApiHandler(
         message: 'All selected emails are in suppression list',
         queued: 0,
         skippedSuppressed: emails.length,
+        quotaAvailable: quotaInfo,
       });
     }
 

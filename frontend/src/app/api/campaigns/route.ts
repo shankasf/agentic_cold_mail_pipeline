@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
+import { CampaignStatus } from '@prisma/client';
 import { getUserFilter, getUserIdForCreate } from '@/lib/auth-utils';
 import {
   createApiHandler,
@@ -127,7 +128,7 @@ export const POST = createApiHandler(
         userId,
         name: name.trim(),
         description: description?.trim() || null,
-        status: status || 'DRAFT',
+        status: (status?.toUpperCase() as CampaignStatus) || CampaignStatus.DRAFT,
       },
       include: {
         _count: {
