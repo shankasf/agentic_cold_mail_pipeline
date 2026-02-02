@@ -243,7 +243,8 @@ A production-ready admin dashboard for generating personalized cold emails using
 - **Evidence-First Design**: All personalization is traceable to source data
 - **Admin Dashboard**: Upload files, review emails, approve, export, and send
 - **Email Threading**: Track conversations and follow-up emails
-- **Unified Inbox (Unibox)**: View all inbound/outbound emails in one place
+- **Unified Inbox**: View all inbound/outbound emails in one place
+- **AI Chatbot**: Natural language interface to query campaigns, emails, analytics, and inbox
 - **AWS SES Integration**: SMTP-based email sending with bounce/complaint handling
 - **Background Workers**: BullMQ-powered job processing
 - **Role-Based Access**: Admin and Sales Rep roles with appropriate permissions
@@ -277,6 +278,10 @@ email_marketing/
 ├── frontend/                 # Next.js application
 │   ├── package.json
 │   ├── Dockerfile            # Production Docker image
+│   ├── scripts/              # Automation scripts
+│   │   ├── setup-aws-inbound.ts      # AWS infrastructure setup
+│   │   ├── check-missed-emails.ts    # Find unprocessed emails
+│   │   └── reprocess-missed-emails.ts # Reprocess missed emails
 │   ├── prisma/
 │   │   ├── schema.prisma     # Database schema with indexes
 │   │   └── migrations/       # Database migrations
@@ -294,9 +299,11 @@ email_marketing/
 │       │   │   ├── campaigns/    # Campaign views
 │       │   │   ├── leads/        # Lead management UI
 │       │   │   ├── identities/   # SES identity UI
-│       │   │   └── unibox/       # Unified inbox
+│       │   │   └── inbox/        # Unified inbox
 │       │   └── login/        # Auth pages
 │       ├── components/       # React components
+│       │   ├── ChatBot.tsx   # AI chatbot interface
+│       │   ├── Sidebar.tsx   # Navigation sidebar
 │       │   └── leads/        # Lead-specific components
 │       │       ├── EmailGenerationModal.tsx  # AI generation modal
 │       │       ├── BulkActionsMenu.tsx       # Bulk operations
@@ -309,16 +316,38 @@ email_marketing/
 │           ├── worker.ts     # Background worker
 │           ├── email-sender.ts   # Email distribution logic
 │           ├── ses.ts        # AWS SES integration
+│           ├── s3-email.ts   # S3 email fetching/parsing
+│           ├── storage.ts    # S3 storage utilities
 │           ├── api-utils.ts  # API handler wrapper
 │           ├── errors.ts     # Error handling utilities
 │           ├── logger.ts     # Structured logging
 │           └── auth-utils.ts # Auth utilities
+├── lambda/                   # AWS Lambda functions
+│   └── ses-inbound-trigger/
+│       └── index.js          # S3 trigger for inbound emails
 └── ai-service/               # Python AI service
     ├── requirements.txt
     ├── main.py               # FastAPI server
     ├── pipeline.py           # Multi-agent orchestration
     ├── config.py             # Configuration management
     ├── schemas.py            # Pydantic models
+    ├── chatbot/              # AI Chatbot agents
+    │   ├── router.py         # Main chatbot router
+    │   ├── db.py             # Database utilities
+    │   ├── agents/           # Specialized agents
+    │   │   ├── router_agent.py       # Intent routing
+    │   │   ├── analytics_agent.py    # Analytics queries
+    │   │   ├── campaigns_agent.py    # Campaign management
+    │   │   ├── contacts_agent.py     # Contact queries
+    │   │   ├── emails_agent.py       # Email queries
+    │   │   ├── inbox_agent.py        # Inbox queries
+    │   │   └── suggestions_agent.py  # Quick suggestions
+    │   └── tools/            # Agent tools
+    │       ├── analytics_tools.py
+    │       ├── campaign_tools.py
+    │       ├── contact_tools.py
+    │       ├── email_tools.py
+    │       └── inbox_tools.py
     └── email_agents/         # AI Agents
         ├── entity_resolver.py
         ├── business_analyzer.py
@@ -491,6 +520,10 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 | `/api/emails/follow-up/ai-generate` | POST | Generate AI follow-up emails |
 | `/api/emails/follow-up/ai-generate/progress` | GET | SSE stream for generation progress |
 | `/api/emails/threads` | GET | Get email threads by business |
+| `/api/chat` | POST | AI chatbot conversation |
+| `/api/chat/suggestions` | GET | Get chatbot quick suggestions |
+| `/api/inbox` | GET | Get inbox emails with filtering |
+| `/api/sidebar-counts/stream` | GET | SSE stream for sidebar counts |
 
 ### AI Service API (FastAPI)
 
@@ -647,6 +680,10 @@ Ensure all production values are set:
 | `SMTP_USER` | SES SMTP username |
 | `SMTP_PASS` | SES SMTP password |
 | `JWT_SECRET` | Secret for JWT token signing |
+| `AWS_ACCESS_KEY_ID` | AWS access key for S3/SES |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret key |
+| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
+| `LAMBDA_INBOUND_SECRET` | Secret for Lambda webhook auth |
 
 ### Database Connection Pooling
 
@@ -920,6 +957,30 @@ interface LambdaS3Event {
 5. **Attachments**: Stores attachments in S3 with database references
 6. **Database**: Creates `InboundEmail` record with all metadata
 
+### Automated AWS Setup
+
+Use the setup script to automatically configure all AWS resources:
+
+```bash
+cd frontend
+npx tsx scripts/setup-aws-inbound.ts
+```
+
+This script creates:
+- **S3 Bucket**: `callsphere-inbound-emails` with SES write policy
+- **IAM Role**: `lambda-ses-inbound-role` with CloudWatch and S3 permissions
+- **Lambda Function**: `ses-inbound-email-trigger` with S3 trigger
+- **SES Receipt Rule**: Routes `@callsphere.tech` emails to S3
+
+### Reprocess Missed Emails
+
+If emails arrived before the pipeline was fully configured, reprocess them:
+
+```bash
+cd frontend
+npx tsx scripts/reprocess-missed-emails.ts
+```
+
 ---
 
 ## Testing
@@ -943,13 +1004,27 @@ pytest
 
 ## Recent Updates
 
+### v2.1 (February 2026)
+
+- **AWS Lambda Inbound Pipeline**: Automated S3 → Lambda → Webhook for inbound emails
+- **AWS Setup Automation**: One-command script to configure all AWS resources
+- **AI Chatbot**: Natural language interface with specialized agents for:
+  - Analytics queries ("What's my open rate?")
+  - Campaign management ("Show active campaigns")
+  - Contact/Lead queries ("Find contacts at Acme")
+  - Email search ("Show bounced emails")
+  - Inbox queries ("Show unread messages")
+- **Email Attachments**: Full attachment support with S3 storage
+- **Missed Email Recovery**: Script to reprocess emails missed during setup
+- **Sidebar Counts SSE**: Real-time sidebar count updates
+
 ### v2.0 (February 2026)
 
 - **Campaign & Lead Management**: Full campaign lifecycle with lead import/export
 - **Multi-Identity Email Distribution**: Round-robin distribution across SES identities
 - **"Approve & Send Now" Feature**: Instantly send AI-generated follow-up emails
 - **Real-Time SSE Progress**: Live updates during AI email generation
-- **Unified Inbox (Unibox)**: View all email threads in one place
+- **Unified Inbox**: View all email threads in one place
 - **Enhanced Error Handling**: Structured logging with request correlation IDs
 - **CI/CD Pipeline**: Automated linting, type checking, testing, and deployment
 - **Docker Support**: Production-ready Dockerfile for containerized deployment
