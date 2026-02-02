@@ -416,22 +416,45 @@ export const POST = createApiHandler(
       },
     });
 
-    // Create contacts if provided
+    // Create contacts if provided (skip duplicates)
     if (contacts && Array.isArray(contacts) && contacts.length > 0) {
       const validContacts = contacts.filter(
         (c) => c.email && c.email.trim().length > 0
       );
 
       if (validContacts.length > 0) {
-        await prisma.contact.createMany({
-          data: validContacts.map((c) => ({
-            businessId: business.id,
-            email: c.email.trim().toLowerCase(),
-            name: c.name?.trim() || null,
-            role: c.role?.trim() || null,
-            sourceConfidence: 100, // Manual entry = high confidence
-          })),
+        // Check for existing emails first
+        const emailsToCheck = validContacts.map(c => c.email.trim().toLowerCase());
+        const existingContacts = await prisma.contact.findMany({
+          where: { email: { in: emailsToCheck } },
+          select: { email: true },
         });
+        const existingEmails = new Set(existingContacts.map(c => c.email));
+
+        // Filter out contacts with existing emails
+        const newContacts = validContacts.filter(
+          c => !existingEmails.has(c.email.trim().toLowerCase())
+        );
+
+        if (newContacts.length > 0) {
+          await prisma.contact.createMany({
+            data: newContacts.map((c) => ({
+              businessId: business.id,
+              email: c.email.trim().toLowerCase(),
+              name: c.name?.trim() || null,
+              role: c.role?.trim() || null,
+              sourceConfidence: 100, // Manual entry = high confidence
+            })),
+            skipDuplicates: true, // Extra safety
+          });
+        }
+
+        if (existingEmails.size > 0) {
+          logger.info('Skipped duplicate contacts', {
+            skippedCount: validContacts.length - newContacts.length,
+            skippedEmails: Array.from(existingEmails).slice(0, 5),
+          });
+        }
       }
     }
 

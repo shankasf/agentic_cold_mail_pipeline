@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import prisma from '@/lib/prisma';
 import { createApiHandler, jsonResponse, parseJsonBody, Errors } from '@/lib/api-utils';
 
-// GET /api/unibox - List inbound emails (replies)
+// GET /api/inbox - List inbound emails (replies)
 export const GET = createApiHandler(
   async (request: NextRequest, { logger, user }) => {
     const { searchParams } = new URL(request.url);
@@ -13,9 +13,14 @@ export const GET = createApiHandler(
     const isStarred = searchParams.get('isStarred');
     const search = searchParams.get('search');
     const threadId = searchParams.get('threadId');
-    const identityId = searchParams.get('identityId'); // Filter by specific identity
+    const identityId = searchParams.get('identityId');
+    const campaignId = searchParams.get('campaignId');
+    const dateFrom = searchParams.get('dateFrom');
+    const dateTo = searchParams.get('dateTo');
+    const sortBy = searchParams.get('sortBy') || 'receivedAt';
+    const sortOrder = searchParams.get('sortOrder') || 'desc';
 
-    logger.debug('Fetching unibox emails', { page, limit, isRead, isArchived, identityId });
+    logger.debug('Fetching inbox emails', { page, limit, isRead, isArchived, identityId, campaignId });
 
     const where: any = {};
 
@@ -43,6 +48,26 @@ export const GET = createApiHandler(
       where.threadId = threadId;
     }
 
+    // Filter by campaign (via business)
+    if (campaignId && campaignId !== 'all') {
+      where.business = {
+        campaignId: campaignId,
+      };
+    }
+
+    // Date range filter
+    if (dateFrom || dateTo) {
+      where.receivedAt = {};
+      if (dateFrom) {
+        where.receivedAt.gte = new Date(dateFrom);
+      }
+      if (dateTo) {
+        const endDate = new Date(dateTo);
+        endDate.setHours(23, 59, 59, 999);
+        where.receivedAt.lte = endDate;
+      }
+    }
+
     // Search in subject and from email
     if (search) {
       where.OR = [
@@ -62,7 +87,6 @@ export const GET = createApiHandler(
 
     // Filter by specific identity or all user's identities
     if (identityId && identityId !== 'all') {
-      // Verify user has access to this identity
       if (userIdentityIds.includes(identityId)) {
         where.sesIdentityId = identityId;
       } else {
@@ -72,10 +96,22 @@ export const GET = createApiHandler(
       where.sesIdentityId = { in: userIdentityIds };
     }
 
+    // Get campaigns for filter dropdown
+    const campaigns = await prisma.campaign.findMany({
+      where: user.role === 'ADMIN' ? {} : { userId: user.id },
+      select: { id: true, name: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    // Build orderBy
+    const orderBy: any = {};
+    orderBy[sortBy] = sortOrder;
+
     const [emails, total, unreadCount] = await Promise.all([
       prisma.inboundEmail.findMany({
         where,
-        orderBy: { receivedAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
         include: {
@@ -84,6 +120,7 @@ export const GET = createApiHandler(
               id: true,
               subject: true,
               status: true,
+              businessId: true,
             },
           },
           contact: {
@@ -99,6 +136,13 @@ export const GET = createApiHandler(
               id: true,
               canonicalName: true,
               industryGuess: true,
+              campaignId: true,
+              campaign: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
             },
           },
           sesIdentity: {
@@ -106,6 +150,15 @@ export const GET = createApiHandler(
               id: true,
               emailAddress: true,
               displayName: true,
+            },
+          },
+          attachments: {
+            select: {
+              id: true,
+              filename: true,
+              contentType: true,
+              sizeBytes: true,
+              isInline: true,
             },
           },
         },
@@ -119,11 +172,12 @@ export const GET = createApiHandler(
       }),
     ]);
 
-    logger.info('Unibox emails fetched', { count: emails.length, total, unreadCount });
+    logger.info('Inbox emails fetched', { count: emails.length, total, unreadCount });
     return jsonResponse({
       emails,
       unreadCount,
-      identities: userIdentities, // Available identities for filtering
+      identities: userIdentities,
+      campaigns,
       pagination: {
         page,
         limit,
@@ -135,7 +189,7 @@ export const GET = createApiHandler(
   { requireAuth: true }
 );
 
-// PATCH /api/unibox - Bulk update emails
+// PATCH /api/inbox - Bulk update emails
 export const PATCH = createApiHandler(
   async (request: NextRequest, { logger, user }) => {
     const body = await parseJsonBody<{ ids: string[]; updates: { isRead?: boolean; isArchived?: boolean; isStarred?: boolean } }>(request, logger);
@@ -145,7 +199,7 @@ export const PATCH = createApiHandler(
       throw Errors.badRequest('Email IDs are required');
     }
 
-    logger.debug('Bulk updating unibox emails', { count: ids.length, updates });
+    logger.debug('Bulk updating inbox emails', { count: ids.length, updates });
 
     const allowedUpdates: any = {};
 
@@ -173,7 +227,6 @@ export const PATCH = createApiHandler(
       });
       const identityIds = userIdentities.map((i) => i.id);
 
-      // Verify all emails belong to user's identities
       const emailCount = await prisma.inboundEmail.count({
         where: {
           id: { in: ids },
@@ -191,10 +244,55 @@ export const PATCH = createApiHandler(
       data: allowedUpdates,
     });
 
-    logger.info('Unibox emails updated', { updated: result.count });
+    logger.info('Inbox emails updated', { updated: result.count });
     return jsonResponse({
       success: true,
       updated: result.count,
+    });
+  },
+  { requireAuth: true }
+);
+
+// DELETE /api/inbox - Delete emails permanently
+export const DELETE = createApiHandler(
+  async (request: NextRequest, { logger, user }) => {
+    const body = await parseJsonBody<{ ids: string[] }>(request, logger);
+    const { ids } = body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw Errors.badRequest('Email IDs are required');
+    }
+
+    logger.debug('Deleting inbox emails', { count: ids.length });
+
+    // Check permissions for non-admins
+    if (user.role !== 'ADMIN') {
+      const userIdentities = await prisma.sESIdentity.findMany({
+        where: { userId: user.id },
+        select: { id: true },
+      });
+      const identityIds = userIdentities.map((i) => i.id);
+
+      const emailCount = await prisma.inboundEmail.count({
+        where: {
+          id: { in: ids },
+          sesIdentityId: { in: identityIds },
+        },
+      });
+
+      if (emailCount !== ids.length) {
+        throw Errors.forbidden('You do not have permission to delete some of these emails');
+      }
+    }
+
+    const result = await prisma.inboundEmail.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    logger.info('Inbox emails deleted', { deleted: result.count });
+    return jsonResponse({
+      success: true,
+      deleted: result.count,
     });
   },
   { requireAuth: true }

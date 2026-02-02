@@ -19,6 +19,7 @@ import uvicorn
 import config
 from pipeline import run_pipeline, recheck_compliance, generate_email_for_contact, generate_follow_up_email
 from email_agents import map_columns, get_mapping_dict, generate_templates
+from chatbot import chatbot_router
 
 # Redis for progress updates
 REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
@@ -61,6 +62,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include chatbot router
+app.include_router(chatbot_router)
 
 
 # Request/Response models

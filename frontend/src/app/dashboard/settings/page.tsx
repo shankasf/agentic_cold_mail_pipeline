@@ -181,7 +181,7 @@ export default function SettingsPage() {
             </div>
             <div className="flex justify-between py-2 border-b">
               <span className="text-gray-500">From Email</span>
-              <span className="font-medium">sagar@callsphere.tech</span>
+              <span className="font-medium">greetings@callsphere.tech</span>
             </div>
             <div className="flex justify-between py-2 border-b">
               <span className="text-gray-500">SMTP Host</span>

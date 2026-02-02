@@ -547,7 +547,7 @@ export default function ThreadDetailPage() {
                 </div>
 
                 <div className="text-xs text-gray-500">
-                  <p>From: Sagar &lt;sagar@callsphere.tech&gt;</p>
+                  <p>From: CallSphere &lt;greetings@callsphere.tech&gt;</p>
                 </div>
               </div>
 

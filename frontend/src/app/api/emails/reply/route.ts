@@ -66,7 +66,7 @@ export const POST = createApiHandler(
         businessId,
         contactId,
         fromName: settings?.businessAddress ? 'CallSphere' : 'CallSphere',
-        fromEmail: 'sagar@callsphere.tech',
+        fromEmail: 'greetings@callsphere.tech',
         subject,
         bodyText,
         footerText: '',

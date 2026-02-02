@@ -4,7 +4,6 @@ import {
   DeleteEmailIdentityCommand,
   GetEmailIdentityCommand,
   CreateConfigurationSetCommand,
-  CreateConfigurationSetEventDestinationCommand,
   DeleteConfigurationSetCommand,
   SendEmailCommand,
   SendEmailCommandInput,
@@ -41,9 +40,6 @@ export function isSESHealthy(): boolean {
 export function getSESCircuitStatus() {
   return sesCircuitBreaker.getStatus();
 }
-
-// Configuration
-const SNS_TOPIC_ARN = process.env.SES_EVENT_SNS_TOPIC_ARN || '';
 
 /**
  * Verify an email identity in SES
@@ -248,31 +244,8 @@ export async function createConfigurationSet(configSetName: string): Promise<{
 
     await client.send(createCommand);
 
-    // Add event destination to publish to SNS
-    if (SNS_TOPIC_ARN) {
-      const eventDestinationCommand = new CreateConfigurationSetEventDestinationCommand({
-        ConfigurationSetName: configSetName,
-        EventDestinationName: `${configSetName}-events`,
-        EventDestination: {
-          Enabled: true,
-          MatchingEventTypes: [
-            'SEND',
-            'DELIVERY',
-            'OPEN',
-            'CLICK',
-            'BOUNCE',
-            'COMPLAINT',
-            'REJECT',
-            'DELIVERY_DELAY',
-          ],
-          SnsDestination: {
-            TopicArn: SNS_TOPIC_ARN,
-          },
-        },
-      });
-
-      await client.send(eventDestinationCommand);
-    }
+    // Note: Event destinations are now configured via Kinesis Firehose in AWS Console
+    // See /api/webhooks/ses-firehose for event processing
 
     return { success: true };
   } catch (error: any) {

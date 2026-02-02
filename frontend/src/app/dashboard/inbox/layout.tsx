@@ -4,7 +4,7 @@ export const metadata: Metadata = {
   title: 'Inbox',
 };
 
-export default function UniboxLayout({
+export default function InboxLayout({
   children,
 }: {
   children: React.ReactNode;

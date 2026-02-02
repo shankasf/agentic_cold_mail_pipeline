@@ -133,7 +133,7 @@ CREATE TABLE email_drafts (
     business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
     contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
     from_name VARCHAR(100) DEFAULT 'CallSphere',
-    from_email VARCHAR(255) DEFAULT 'sagar@callsphere.tech',
+    from_email VARCHAR(255) DEFAULT 'greetings@callsphere.tech',
     subject VARCHAR(500) NOT NULL,
     body_text TEXT NOT NULL,
     footer_text TEXT NOT NULL,
@@ -217,5 +217,60 @@ CREATE TRIGGER update_email_drafts_updated_at
 
 CREATE TRIGGER update_admin_settings_updated_at
     BEFORE UPDATE ON admin_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- =============================================================================
+-- VALIDATED EMAIL BUSINESSES
+-- Tracks businesses with successfully delivered emails for reputation tracking
+-- =============================================================================
+
+CREATE TABLE validated_email_businesses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+
+    -- First and last successful delivery timestamps
+    first_validated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    last_validated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+    -- Email metrics for this business
+    total_emails_sent INTEGER DEFAULT 0,
+    total_delivered INTEGER DEFAULT 0,
+    total_opened INTEGER DEFAULT 0,
+    total_clicked INTEGER DEFAULT 0,
+    total_replied INTEGER DEFAULT 0,
+    total_bounced INTEGER DEFAULT 0,
+    total_complaints INTEGER DEFAULT 0,
+
+    -- Calculated rates (stored for quick queries)
+    delivery_rate FLOAT DEFAULT 0,       -- delivered / sent
+    open_rate FLOAT DEFAULT 0,           -- opened / delivered
+    click_rate FLOAT DEFAULT 0,          -- clicked / delivered
+    reply_rate FLOAT DEFAULT 0,          -- replied / delivered
+    bounce_rate FLOAT DEFAULT 0,         -- bounced / sent
+    complaint_rate FLOAT DEFAULT 0,      -- complaints / sent
+
+    -- Validation status
+    is_validated BOOLEAN DEFAULT true,   -- Email deliverability confirmed
+    validation_score INTEGER DEFAULT 100, -- 0-100 score based on metrics
+
+    -- Last contact email that was validated
+    last_validated_email VARCHAR(255),
+
+    -- Timestamps
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    UNIQUE(business_id)
+);
+
+CREATE INDEX idx_validated_email_businesses_business_id ON validated_email_businesses(business_id);
+CREATE INDEX idx_validated_email_businesses_validation_score ON validated_email_businesses(validation_score);
+CREATE INDEX idx_validated_email_businesses_is_validated ON validated_email_businesses(is_validated);
+CREATE INDEX idx_validated_email_businesses_last_validated ON validated_email_businesses(last_validated_at);
+
+-- Trigger for updated_at
+CREATE TRIGGER update_validated_email_businesses_updated_at
+    BEFORE UPDATE ON validated_email_businesses
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();

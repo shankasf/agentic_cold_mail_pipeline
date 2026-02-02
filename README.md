@@ -458,7 +458,9 @@ Approved emails can be sent via the Send API (respects 100/day cap).
 | `/api/exports/csv` | GET | Export as CSV |
 | `/api/exports/pdf/[id]` | GET | Export single email as PDF |
 | `/api/analytics` | GET | Dashboard analytics |
-| `/api/webhooks/ses` | POST | SES bounce/complaint webhook |
+| `/api/webhooks/ses-firehose` | POST | SES events webhook (Kinesis Firehose) |
+| `/api/webhooks/ses-inbound` | POST | Inbound email webhook (Lambda S3 trigger) |
+| `/api/attachments/[id]` | GET | Download email attachment |
 
 #### Campaign & Lead Endpoints
 
@@ -660,6 +662,265 @@ cd frontend
 npm run build
 npm start
 ```
+
+## AWS SES Event Tracking with Kinesis Data Firehose
+
+The application uses **AWS Kinesis Data Firehose** to receive and process SES email events (opens, clicks, bounces, complaints, deliveries) in real-time.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      SES EVENT TRACKING FLOW                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
+   │   AWS SES   │────▶│  Configuration  │────▶│ Kinesis Firehose │
+   │  (Sending)  │     │      Set        │     │    (Stream)      │
+   └─────────────┘     └─────────────────┘     └────────┬─────────┘
+                                                        │
+                              ┌──────────────────────────┘
+                              │ HTTP Endpoint Destination
+                              ▼
+                       ┌─────────────────────────────────┐
+                       │  /api/webhooks/ses-firehose     │
+                       │  (Next.js API Route)            │
+                       └───────────────┬─────────────────┘
+                                       │
+                                       ▼
+                       ┌─────────────────────────────────┐
+                       │       Event Processing          │
+                       │  • Update email status          │
+                       │  • Track opens/clicks           │
+                       │  • Handle bounces/complaints    │
+                       │  • Add to suppression list      │
+                       └───────────────┬─────────────────┘
+                                       │
+                                       ▼
+                       ┌─────────────────────────────────┐
+                       │         PostgreSQL              │
+                       │   (email_events table)          │
+                       └─────────────────────────────────┘
+```
+
+### Why Firehose Instead of SNS?
+
+| Feature | SNS | Firehose |
+|---------|-----|----------|
+| **Batching** | No (1 event per request) | Yes (multiple events per request) |
+| **Retry Logic** | Limited | Built-in with configurable duration |
+| **Buffering** | None | Buffer by size (5 MiB) and time (60s) |
+| **Dead Letter Queue** | Manual setup | Automatic S3 backup on failure |
+| **Cost** | Per-message | Per-GB ingested |
+
+### Firehose Configuration
+
+**Stream Settings:**
+- **Destination**: HTTP Endpoint
+- **Endpoint URL**: `https://marketing.callsphere.tech/api/webhooks/ses-firehose`
+- **Buffer Size**: 5 MiB
+- **Buffer Interval**: 60 seconds
+- **Retry Duration**: 300 seconds (5 minutes)
+
+**SES Configuration Set:**
+All emails are sent with a Configuration Set that publishes events to Firehose:
+- Event Types: `SEND`, `DELIVERY`, `OPEN`, `CLICK`, `BOUNCE`, `COMPLAINT`, `REJECT`, `DELIVERY_DELAY`
+
+### Webhook Endpoint
+
+**File**: `frontend/src/app/api/webhooks/ses-firehose/route.ts`
+
+```typescript
+// Firehose sends batched, base64-encoded records
+interface FirehoseRequest {
+  requestId: string;      // Must echo back in response
+  timestamp: number;
+  records: Array<{
+    data: string;         // Base64-encoded JSON
+  }>;
+}
+
+// Response format required by Firehose
+{
+  requestId: "echoed-request-id",
+  timestamp: 1234567890
+}
+```
+
+### Events Processed
+
+| Event Type | Action |
+|------------|--------|
+| `Send` | Log send confirmation |
+| `Delivery` | Mark email as delivered, update metrics |
+| `Open` | Track open event, update open count |
+| `Click` | Track clicked link, update click count |
+| `Bounce` | Mark as bounced, add to suppression list |
+| `Complaint` | Mark as complaint, add to suppression list |
+| `Reject` | Log rejection reason |
+| `DeliveryDelay` | Log delay, track for monitoring |
+
+### Authentication (Optional)
+
+Set `FIREHOSE_ACCESS_KEY` environment variable to enable access key validation:
+
+```env
+FIREHOSE_ACCESS_KEY=your-secret-key
+```
+
+In Firehose, configure the access key in the HTTP endpoint settings.
+
+### Monitoring
+
+Check Firehose delivery status in AWS Console:
+- **Destination error logs**: Shows failed deliveries with error messages
+- **CloudWatch metrics**: Monitor `DeliveryToHttpEndpoint.Success` and `DeliveryToHttpEndpoint.Failures`
+
+### Troubleshooting
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `502 Bad Gateway` | App crashed or restarting | Check pod logs, ensure app is healthy |
+| `Invalid content-type` | Missing JSON header | Ensure endpoint returns `application/json` |
+| `Access key invalid` | Wrong access key | Verify `FIREHOSE_ACCESS_KEY` matches |
+
+---
+
+## Inbound Email Processing with Lambda
+
+The application processes inbound emails (replies) using **AWS Lambda** triggered by S3 events.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      INBOUND EMAIL FLOW                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
+   │   AWS SES   │────▶│       S3        │────▶│     Lambda       │
+   │  (Receive)  │     │  (Store Email)  │     │  (S3 Trigger)    │
+   └─────────────┘     └─────────────────┘     └────────┬─────────┘
+                                                        │
+                              ┌──────────────────────────┘
+                              │ HTTPS POST with X-Lambda-Secret
+                              ▼
+                       ┌─────────────────────────────────┐
+                       │  /api/webhooks/ses-inbound      │
+                       │  (Next.js API Route)            │
+                       └───────────────┬─────────────────┘
+                                       │
+                                       ▼
+                       ┌─────────────────────────────────┐
+                       │       Email Processing          │
+                       │  • Fetch raw email from S3      │
+                       │  • Parse with mailparser        │
+                       │  • Extract attachments          │
+                       │  • Link to original thread      │
+                       │  • Store in database            │
+                       └───────────────┬─────────────────┘
+                                       │
+                                       ▼
+                       ┌─────────────────────────────────┐
+                       │   PostgreSQL + S3 Attachments   │
+                       └─────────────────────────────────┘
+```
+
+### Lambda Function
+
+**File**: `lambda/ses-inbound-trigger/index.js`
+
+The Lambda function:
+1. Receives S3 event when new email arrives
+2. Extracts bucket name and object key
+3. Sends HTTPS POST to webhook with `X-Lambda-Secret` header
+4. Retries on failure (Lambda built-in retry)
+
+### AWS Setup
+
+**1. Create Lambda IAM Role:**
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:*:*:*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::callsphere-inbound-emails/*"
+    }
+  ]
+}
+```
+
+**2. Create Lambda Function:**
+```bash
+aws lambda create-function \
+  --function-name ses-inbound-email-trigger \
+  --runtime nodejs20.x \
+  --handler index.handler \
+  --role arn:aws:iam::ACCOUNT_ID:role/lambda-ses-inbound-role \
+  --timeout 30 \
+  --memory-size 128 \
+  --environment "Variables={WEBHOOK_HOST=marketing.callsphere.tech,LAMBDA_SECRET=your-secret}"
+```
+
+**3. Add S3 Trigger:**
+```bash
+aws lambda add-permission \
+  --function-name ses-inbound-email-trigger \
+  --statement-id s3-trigger \
+  --action lambda:InvokeFunction \
+  --principal s3.amazonaws.com \
+  --source-arn arn:aws:s3:::callsphere-inbound-emails
+
+aws s3api put-bucket-notification-configuration \
+  --bucket callsphere-inbound-emails \
+  --notification-configuration '{
+    "LambdaFunctionConfigurations": [{
+      "LambdaFunctionArn": "arn:aws:lambda:us-east-1:ACCOUNT_ID:function:ses-inbound-email-trigger",
+      "Events": ["s3:ObjectCreated:*"],
+      "Filter": {"Key": {"FilterRules": [{"Name": "prefix", "Value": "inbound/"}]}}
+    }]
+  }'
+```
+
+### Environment Variables
+
+```env
+# Add to .env
+LAMBDA_INBOUND_SECRET=<generate-32-char-random-string>
+```
+
+### Webhook Endpoint
+
+**File**: `frontend/src/app/api/webhooks/ses-inbound/route.ts`
+
+```typescript
+// Lambda sends this payload
+interface LambdaS3Event {
+  bucket: string;      // S3 bucket name
+  key: string;         // S3 object key
+  eventTime: string;   // ISO timestamp
+}
+
+// Requires X-Lambda-Secret header for authentication
+```
+
+### Processing Steps
+
+1. **Authentication**: Validates `X-Lambda-Secret` header
+2. **Fetch Email**: Downloads raw email from S3
+3. **Parse**: Uses mailparser to extract headers, body, attachments
+4. **Thread Detection**: Links reply to original sent email via In-Reply-To header
+5. **Attachments**: Stores attachments in S3 with database references
+6. **Database**: Creates `InboundEmail` record with all metadata
+
+---
 
 ## Testing
 

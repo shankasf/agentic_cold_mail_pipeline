@@ -4,6 +4,15 @@ import { startOfDay } from 'date-fns';
 import { publishEmailEvent } from './redis';
 import { SESIdentity } from '@prisma/client';
 import { validateEmail, getValidationSummary } from './pre-send-validation';
+import {
+  trackEmailSent,
+  trackEmailDelivered,
+  trackEmailOpened,
+  trackEmailClicked,
+  trackEmailReplied,
+  trackEmailBounced,
+  trackEmailComplaint,
+} from './validated-email-tracker';
 
 /**
  * Find an SES identity for a given email address.
@@ -36,8 +45,8 @@ async function findIdentityForEmail(email: string): Promise<SESIdentity | null> 
 
 // Protected identities - these are primary/main emails that should only be used as last resort
 // to preserve their reputation and keep them available for important communications
-const PROTECTED_IDENTITIES = [
-  'sagar@callsphere.tech',
+const PROTECTED_IDENTITIES: string[] = [
+  // Add emails here that should be protected from bulk sending
 ];
 
 // Reputation thresholds for smart rotation
@@ -87,7 +96,7 @@ export async function getAvailableIdentities(includeProtected: boolean = true): 
  * Strategy (Smart Rotation):
  * 1. First try non-protected identities using weighted selection (quota * reputation)
  * 2. Only fall back to protected identities when all others are exhausted
- * This protects primary emails (like sagar@callsphere.tech) for important communications.
+ * This protects primary emails (like greetings@callsphere.tech) for important communications.
  */
 export async function findBestAvailableIdentity(): Promise<SESIdentity | null> {
   // First, try non-protected identities only with smart rotation
@@ -838,6 +847,13 @@ export async function sendEmail(emailDraftId: string): Promise<{ success: boolea
       console.error('Error publishing SENT event:', e);
     }
 
+    // Track in validated email businesses
+    try {
+      await trackEmailSent(email.businessId, email.contact.email);
+    } catch (e) {
+      console.error('Error tracking sent email for validation:', e);
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Error sending email:', error);
@@ -1035,13 +1051,46 @@ export async function handleEmailEvent(
       },
     });
 
+    // Get business info for validation tracking and display
+    const emailWithBusiness = await prisma.emailDraft.findUnique({
+      where: { id: emailDraft.id },
+      include: {
+        business: { select: { id: true, canonicalName: true } },
+        contact: { select: { email: true } },
+      },
+    });
+
+    // Track in validated email businesses based on event type
+    if (emailWithBusiness?.business?.id) {
+      try {
+        switch (type) {
+          case 'delivery':
+            await trackEmailDelivered(
+              emailWithBusiness.business.id,
+              emailWithBusiness.contact?.email || email
+            );
+            break;
+          case 'open':
+            await trackEmailOpened(emailWithBusiness.business.id);
+            break;
+          case 'click':
+            await trackEmailClicked(emailWithBusiness.business.id);
+            break;
+          case 'bounce':
+          case 'reject':
+            await trackEmailBounced(emailWithBusiness.business.id);
+            break;
+          case 'complaint':
+            await trackEmailComplaint(emailWithBusiness.business.id);
+            break;
+        }
+      } catch (e) {
+        console.error('Error tracking email event for validation:', e);
+      }
+    }
+
     // Publish real-time event for connected clients
     try {
-      // Get business name for display
-      const emailWithBusiness = await prisma.emailDraft.findUnique({
-        where: { id: emailDraft.id },
-        include: { business: { select: { canonicalName: true } } },
-      });
       await publishEmailEvent(
         emailDraft.id,
         eventTypeMap[type],

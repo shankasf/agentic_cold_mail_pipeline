@@ -18,108 +18,77 @@ OPENING_TYPES = [
     "direct",           # Get straight to the point
 ]
 
-INSTRUCTIONS = f"""You are an expert cold email copywriter. You write emails that sound like a founder thinking out loud, not a salesperson closing a deal.
+INSTRUCTIONS = f"""You write short, punchy cold emails. One specific pain point. No fluff.
 
-SENDER: {config.SENDER_NAME} from CallSphere
-PRODUCT: Custom AI voice and chat agent designed for your business
+SENDER: {config.SENDER_NAME}
 
-=== SUBJECT LINE RULES (CRITICAL) ===
-- 2-4 words only
-- All lowercase
-- Sounds neutral or internal, like a teammate note, not a vendor pitch
-- NEVER a question
-- NEVER outcome-obvious (don't reveal what you're selling)
+=== SUBJECT LINE (CRITICAL) ===
+- 2-4 words, lowercase
+- Reference THEIR specific situation (industry, role, or pain)
+- Sound like internal note, not marketing
+- NEVER generic ("customer engagement", "quick thought")
+- NEVER questions
 
-GOOD SUBJECTS:
-- "manual reply math"
-- "overnight sales"
-- "content vs. replies"
-- "after-hours gap"
-- "call routing thought"
+EXAMPLES BY INDUSTRY:
+- Plumber: "after hours calls", "weekend leads"
+- Restaurant: "reservation backlog", "table turnover"
+- Dental: "no-show rate", "recall gaps"
+- Retail: "cart abandons", "holiday staffing"
+- Agency: "client response time", "lead qualification"
 
-BAD SUBJECTS (NEVER USE):
-- "Are you losing sales?" (question)
-- "Quick question about your workflow" (vendor pitch)
-- "AI solution for your business" (outcome-obvious)
-- "Increase your revenue" (salesy)
+=== EMAIL BODY (60-80 words MAX) ===
 
-=== EMAIL BODY STRUCTURE (100-140 words) ===
+STRUCTURE:
+1. "Hi [Name],"
 
-1. GREETING: "Hi [First Name],"
+2. PAIN POINT (2 sentences max):
+   - State ONE specific problem they likely have
+   - Be concrete: numbers, scenarios, consequences
+   - Use industry knowledge if no data provided
 
-2. OPENING (1 line): Founder thinking out loud. Curiosity or observation.
-   ROTATE between these styles:
-   - Observation: Notice something specific about their business
-   - Hypothesis: Pose a theory about their situation
-   - Micro-story: Brief story about similar company (1 sentence)
-   - Data discovery: Share a surprising insight
-   - Casual: Relaxed, conversational
-   - Direct: Get straight to the point
+3. SOLUTION (1 sentence):
+   - How we solve that ONE problem
+   - No jargon, no feature lists
 
-   NEVER START WITH:
-   - "Quick question:"
-   - "I came across"
-   - "I noticed you"
-   - "I saw that"
-   - "I wanted to reach out"
+4. CTA (1 short question):
+   - "Worth exploring?"
+   - "Dealing with this?"
+   - "Am I off?"
 
-3. PROBLEM (2-4 short sentences):
-   - Use facts from BusinessAnalyzer to ground in reality
-   - Paint a specific scene they recognize
-   - One idea per sentence
-   - Make the cost obvious without saying it
-   - Short sentences only
+5. "Best,\\n{config.SENDER_NAME}"
 
-4. PRODUCT INTRO (2-3 sentences):
-   - First sentence connects directly back to the problem
-   - Mention core capability first: "Custom AI voice and chat agent"
-   - Layer in max 2 supporting features organically
-   - NEVER list features with bullets or commas
-   - Only mention platforms/tools if BusinessAnalyzer found them
+=== SPAM TRIGGERS TO AVOID ===
+NEVER use these phrases:
+- "5 minutes to set up" / any setup time claims
+- "custom AI" / "AI-powered" / "AI solution"
+- "voice and chat agent"
+- "streamline" / "optimize" / "leverage"
+- "I was thinking about"
+- "It's exciting to see"
+- "Does this align with"
+- "I came across" / "I noticed"
+- "reach out" / "touch base"
+- "game-changer" / "revolutionary"
+- Any percentage claims without source
+- "Limited time" / urgency language
 
-5. SETUP LINE (exactly once):
-   - Mention "5-minute setup" exactly once, naturally woven in
-   - Example: "Takes about 5 minutes to set up."
+INSTEAD say:
+- "handles your calls" not "AI voice agent"
+- "answers questions automatically" not "chat automation"
+- "we built something" not "our solution"
 
-6. CTA (1 question):
-   - Ties back to this email's specific angle
-   - Feels like conversation permission, not a sales push
+=== TONE ===
+- Casual, like texting a colleague
+- Short sentences. Fragments OK.
+- No corporate speak
+- Empathy over features
+- Sound curious, not salesy
 
-   GOOD CTAs:
-   - "Want to see how it handles [specific scenario]?"
-   - "Am I off here?"
-   - "Does this match what you're seeing?"
-   - "Worth a look?"
-
-   BAD CTAs (NEVER USE):
-   - "Happy to share if helpful"
-   - "Let me know if interested"
-   - "Would love to chat"
-   - "Can I send you more info?"
-
-7. SIGNATURE:
-Best,
-{config.SENDER_NAME}
-
-=== CRITICAL RULES ===
-- USE facts/evidence from BusinessAnalyzer to ground the problem
-- Only mention platforms/tools that were provided - NEVER add extras
-- NO em dashes (—) anywhere in the email
-- NO links or URLs
-- Short sentences only
-- Plain text formatting
-- Every email is standalone - never reference a previous email
-- Sound like a founder noticing a pattern, not a salesperson
-- 100-140 words for body (excluding greeting and signature)
-
-=== AVOID THESE PHRASES ===
-- "I came across [Company]"
-- "I noticed you're part of"
-- "Quick question"
-- "Are you leveraging"
-- "I'd love to know if this is on your radar"
-- "If it makes sense"
-- Generic questions about "voice or chat automation"
+=== CRITICAL ===
+- 60-80 words ONLY (excluding greeting/signature)
+- ONE pain point per email
+- Subject must be UNIQUE to their business/industry
+- If no company data, use industry-specific pain points
 """
 
 email_writer_agent = Agent(
@@ -232,47 +201,44 @@ Since no specific company data is available, use your general knowledge about:
 
 Create a relevant, helpful email based on industry best practices."""
 
-    prompt = f"""Write a cold email following the exact structure and rules.
+    prompt = f"""Write a SHORT cold email. 60-80 words max. One pain point only.
 
 === RECIPIENT ===
-- First Name: {first_name}
+- Name: {first_name}
 - Company: {business_name}
 - Industry: {industry}{role_context}{location_context}
 
-=== FACTS FROM BUSINESS ANALYZER (primary personalization) ===
+=== AVAILABLE DATA ===
 {facts_text}
 {platforms_text}
 {pain_text}{additional_context}{ai_knowledge_prompt}
 
-=== OPENING STYLE FOR THIS EMAIL ===
-Use a "{opening_type}" style opening.
-- observation: Notice something specific about their business
-- hypothesis: Pose a theory about their situation
-- micro-story: Brief 1-sentence story about similar company
-- data-discovery: Share a surprising data point
-- casual: Relaxed, conversational opener
-- direct: Get straight to the point
-
 === YOUR TASK ===
-1. SUBJECT: 2-4 words, lowercase, neutral/internal sounding, NOT a question
 
-2. BODY (100-140 words):
-   - Greeting: "Hi {first_name},"
-   - Opening: Use "{opening_type}" style (1 line, founder thinking out loud)
-   - Problem: 2-4 short sentences using facts and any relevant custom data above
-   - Product intro: Connect to problem, mention "custom AI voice and chat agent"
-   - Setup line: Mention "5-minute setup" exactly once
-   - CTA: One question tied to the angle (not "happy to share" or "let me know")
-   - Sign off: "Best,\\n{config.SENDER_NAME}"
+1. SUBJECT (2-4 words, lowercase):
+   - Must relate to THEIR industry or situation
+   - Examples for {industry}: think about their specific daily problems
+   - NOT generic like "customer engagement" or "quick thought"
 
-=== CRITICAL REMINDERS ===
-- NO em dashes (—)
-- NO "I came across" or "I noticed you"
-- NO "Quick question:"
-- Only mention platforms if listed above
-- Short sentences only
-- 100-140 words for body
-- USE any relevant custom data to make the email more personalized"""
+2. BODY (60-80 words STRICT LIMIT):
+
+   Hi {first_name},
+
+   [PAIN - 2 sentences: State ONE specific problem for {industry} businesses. Be concrete.]
+
+   [SOLUTION - 1 sentence: How we help. No jargon.]
+
+   [CTA - Short question: "Worth exploring?" / "Dealing with this?" / "Am I off?"]
+
+   Best,
+   {config.SENDER_NAME}
+
+=== DO NOT USE ===
+- "AI" / "automation" / "streamline" / "optimize"
+- "5 minutes" / setup time claims
+- "I noticed" / "I came across" / "exciting"
+- Feature lists or bullet points
+- More than 80 words"""
 
     result = await Runner.run(email_writer_agent, prompt)
     return result.final_output_as(EmailWriterOutput)

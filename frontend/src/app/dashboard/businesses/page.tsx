@@ -378,6 +378,12 @@ function BusinessesPageContent() {
 
     if (!confirm(confirmMessage)) return;
 
+    // Optimistic update - remove from UI immediately
+    setBusinesses((prev) => prev.filter((b) => !idsToDelete.includes(b.id)));
+    setTotalCount((prev) => prev - countToDelete);
+    setSelectedIds([]);
+    setSelectAll(false);
+
     setDeleting(true);
     try {
       const res = await fetch('/api/businesses', {
@@ -389,6 +395,8 @@ function BusinessesPageContent() {
       const data = await res.json();
 
       if (!res.ok) {
+        // Revert on error
+        fetchBusinesses();
         toast.error(
           'Delete Failed',
           data.error?.message || data.error || 'Failed to delete companies'
@@ -403,17 +411,17 @@ function BusinessesPageContent() {
           `Deleted ${data.deletedCount} of ${countToDelete} companies`,
           ['Some companies may have already been deleted', 'Some may belong to another user']
         );
+        // Refetch to sync actual state
+        fetchBusinesses();
       } else {
         toast.success(
           'Companies Deleted',
           `Successfully deleted ${data.deletedCount} ${data.deletedCount === 1 ? 'company' : 'companies'}`
         );
       }
-
-      setSelectedIds([]);
-      setSelectAll(false);
-      fetchBusinesses();
     } catch (error) {
+      // Revert on error
+      fetchBusinesses();
       toast.error(
         'Delete Failed',
         error instanceof Error ? error.message : 'Failed to delete companies'
@@ -470,10 +478,26 @@ function BusinessesPageContent() {
         'Company Created',
         `"${data.canonicalName}" with ${data.contacts?.length || 0} contact(s)`
       );
+
+      // Optimistic update - add to list immediately
+      setBusinesses((prev) => [{
+        id: data.id,
+        canonicalName: data.canonicalName,
+        website: data.website,
+        industryGuess: data.industryGuess,
+        location: data.location,
+        createdAt: data.createdAt || new Date().toISOString(),
+        _count: {
+          contacts: data.contacts?.length || 0,
+          evidence: 0,
+          emailDrafts: 0,
+        },
+      }, ...prev]);
+      setTotalCount((prev) => prev + 1);
+
       setShowCreateModal(false);
       setNewCompany({ name: '', website: '', industry: '', location: '' });
       setNewContacts([{ email: '', name: '', role: '' }]);
-      fetchBusinesses();
     } catch (error) {
       toast.error(
         'Failed to Create Company',

@@ -41,6 +41,9 @@ import {
   ChevronDown,
   ChevronUp,
   X,
+  ShieldCheck,
+  AlertOctagon,
+  MailWarning,
 } from 'lucide-react';
 import { Skeleton, ErrorState } from '@/components/LoadingStates';
 
@@ -258,6 +261,42 @@ export default function DashboardPage() {
     {
       ...defaultSWRConfig,
       refreshInterval: 300000, // Refresh every 5 minutes
+    }
+  );
+
+  // Fetch email validation metrics
+  interface ValidationMetrics {
+    summary: {
+      totalContacts: number;
+      validEmails: number;
+      invalidEmails: number;
+      riskyEmails: number;
+      blockedEmails: number;
+      pendingValidation: number;
+      validationRate: number;
+      invalidRate: number;
+      riskyRate: number;
+    };
+    issues: {
+      formatIssues: number;
+      mxIssues: number;
+      disposableEmails: number;
+      roleAccountEmails: number;
+    };
+  }
+
+  const validationApiUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    if (campaignId) params.set('campaignId', campaignId);
+    return `/api/analytics/email-validation?${params.toString()}`;
+  }, [campaignId]);
+
+  const { data: validationData } = useSWR<ValidationMetrics>(
+    validationApiUrl,
+    fetcher,
+    {
+      ...defaultSWRConfig,
+      refreshInterval: 300000,
     }
   );
 
@@ -563,6 +602,65 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Email Validation Metrics */}
+      {validationData && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+          <div className="card bg-gradient-to-br from-teal-50 to-teal-100 border-teal-200">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-teal-500 rounded-lg shadow-lg shadow-teal-500/30">
+                <ShieldCheck className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-teal-600 uppercase tracking-wide">Validated</p>
+                <p className="text-xl font-bold text-teal-700">
+                  {validationData.summary.validationRate.toFixed(1)}%
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center gap-2 mb-1">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              <p className="text-xs font-medium text-gray-500">Valid Emails</p>
+            </div>
+            <p className="text-xl font-bold text-green-600">
+              {validationData.summary.validEmails.toLocaleString()}
+            </p>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="w-4 h-4 text-yellow-500" />
+              <p className="text-xs font-medium text-gray-500">Risky Emails</p>
+            </div>
+            <p className="text-xl font-bold text-yellow-600">
+              {validationData.summary.riskyEmails.toLocaleString()}
+            </p>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertOctagon className="w-4 h-4 text-red-500" />
+              <p className="text-xs font-medium text-gray-500">Invalid Emails</p>
+            </div>
+            <p className="text-xl font-bold text-red-600">
+              {validationData.summary.invalidEmails.toLocaleString()}
+            </p>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center gap-2 mb-1">
+              <Ban className="w-4 h-4 text-gray-500" />
+              <p className="text-xs font-medium text-gray-500">Blocked</p>
+            </div>
+            <p className="text-xl font-bold text-gray-600">
+              {validationData.summary.blockedEmails.toLocaleString()}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Delivery & Engagement Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="card">
@@ -622,192 +720,394 @@ export default function DashboardPage() {
 
       {/* Charts Row 1 - Status and Engagement Donut Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-        {/* Email Status Pie Chart */}
+        {/* Email Status - Horizontal Breakdown */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Email Status</h2>
-            <BarChart3 className="w-5 h-5 text-gray-400" />
+            <h2 className="text-lg font-semibold text-gray-900">Email Pipeline</h2>
+            <div className="flex items-center gap-1 text-xs text-gray-500">
+              <span className="font-bold text-gray-900">{analytics.overview.totalEmails.toLocaleString()}</span>
+              <span>total</span>
+            </div>
           </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusPieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  labelLine={false}
-                >
-                  {statusPieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) => [value.toLocaleString(), 'Count']}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+
+          {/* Visual Pipeline */}
+          <div className="space-y-4">
+            {/* Sent emails - main success metric */}
+            {(() => {
+              const sent = analytics.statusBreakdown['SENT'] || 0;
+              const total = analytics.overview.totalEmails || 1;
+              const sentPercent = (sent / total) * 100;
+              return (
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-gradient-to-r from-green-400 to-emerald-500 shadow-sm" />
+                      <span className="text-sm font-medium text-gray-700">Sent</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-green-600">{sent.toLocaleString()}</span>
+                      <span className="text-xs text-gray-400">({sentPercent.toFixed(1)}%)</span>
+                    </div>
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-green-400 to-emerald-500 rounded-full transition-all duration-700"
+                      style={{ width: `${sentPercent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Needs Review - action required */}
+            {(() => {
+              const review = analytics.statusBreakdown['NEEDS_REVIEW'] || 0;
+              const total = analytics.overview.totalEmails || 1;
+              const reviewPercent = (review / total) * 100;
+              return review > 0 ? (
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 shadow-sm" />
+                      <span className="text-sm font-medium text-gray-700">Needs Review</span>
+                      <span className="px-1.5 py-0.5 text-xs bg-amber-100 text-amber-700 rounded-full font-medium">Action</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-amber-600">{review.toLocaleString()}</span>
+                      <span className="text-xs text-gray-400">({reviewPercent.toFixed(1)}%)</span>
+                    </div>
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-400 to-orange-500 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(reviewPercent, 2)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Draft/Ready */}
+            {(() => {
+              const draft = (analytics.statusBreakdown['DRAFT'] || 0) + (analytics.statusBreakdown['APPROVED'] || 0);
+              const total = analytics.overview.totalEmails || 1;
+              const draftPercent = (draft / total) * 100;
+              return draft > 0 ? (
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-gradient-to-r from-blue-400 to-blue-500 shadow-sm" />
+                      <span className="text-sm font-medium text-gray-700">Draft / Ready</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-blue-600">{draft.toLocaleString()}</span>
+                      <span className="text-xs text-gray-400">({draftPercent.toFixed(1)}%)</span>
+                    </div>
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-400 to-blue-500 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(draftPercent, 2)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {/* Failed (Bounced + Complaint) */}
+            {(() => {
+              const failed = (analytics.statusBreakdown['BOUNCED'] || 0) + (analytics.statusBreakdown['COMPLAINT'] || 0);
+              const total = analytics.overview.totalEmails || 1;
+              const failedPercent = (failed / total) * 100;
+              return failed > 0 ? (
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-gradient-to-r from-red-400 to-red-500 shadow-sm" />
+                      <span className="text-sm font-medium text-gray-700">Failed</span>
+                      {failedPercent > 5 && (
+                        <span className="px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded-full font-medium">High</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold text-red-600">{failed.toLocaleString()}</span>
+                      <span className="text-xs text-gray-400">({failedPercent.toFixed(1)}%)</span>
+                    </div>
+                  </div>
+                  <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-red-400 to-red-500 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(failedPercent, 2)}%` }}
+                    />
+                  </div>
+                </div>
+              ) : null;
+            })()}
           </div>
-          {/* Legend */}
-          <div className="flex flex-wrap justify-center gap-2 mt-3 pt-3 border-t">
-            {statusPieData.map((entry, index) => (
-              <div key={index} className="flex items-center gap-1 text-xs">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
-                <span className="text-gray-600">{entry.name}</span>
-                <span className="font-medium text-gray-900">({entry.value})</span>
-              </div>
-            ))}
+
+          {/* Mini status breakdown */}
+          <div className="mt-4 pt-4 border-t grid grid-cols-3 gap-2">
+            <div className="text-center p-2 bg-green-50 rounded-lg">
+              <p className="text-xs text-green-600 font-medium">Delivered</p>
+              <p className="text-sm font-bold text-green-700">{analytics.deliveryMetrics.delivered.toLocaleString()}</p>
+            </div>
+            <div className="text-center p-2 bg-amber-50 rounded-lg">
+              <p className="text-xs text-amber-600 font-medium">Bounced</p>
+              <p className="text-sm font-bold text-amber-700">{analytics.deliveryMetrics.bounced.toLocaleString()}</p>
+            </div>
+            <div className="text-center p-2 bg-red-50 rounded-lg">
+              <p className="text-xs text-red-600 font-medium">Complaints</p>
+              <p className="text-sm font-bold text-red-700">{analytics.reputationMetrics.complaints.toLocaleString()}</p>
+            </div>
           </div>
         </div>
 
-        {/* Open Rate Donut Chart */}
+        {/* Open Rate - Enhanced Gauge */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-gray-900">Open Rate</h2>
-            <Eye className="w-5 h-5 text-amber-500" />
+            <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+              analytics.engagementMetrics.openRate >= 40 ? 'bg-green-100 text-green-700' :
+              analytics.engagementMetrics.openRate >= 20 ? 'bg-amber-100 text-amber-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {analytics.engagementMetrics.openRate >= 40 ? 'Excellent' :
+               analytics.engagementMetrics.openRate >= 20 ? 'Good' : 'Needs Work'}
+            </div>
           </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: 'Opened', value: analytics.engagementMetrics.uniqueOpens, color: '#f59e0b' },
-                    { name: 'Not Opened', value: Math.max(0, analytics.deliveryMetrics.delivered - analytics.engagementMetrics.uniqueOpens), color: '#e5e7eb' },
-                  ]}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  dataKey="value"
-                  labelLine={false}
-                >
-                  <Cell fill="#f59e0b" />
-                  <Cell fill="#e5e7eb" />
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) => [value.toLocaleString(), 'Count']}
+          <div className="relative h-52 flex items-center justify-center">
+            {/* Multi-layer ring */}
+            <svg viewBox="0 0 200 200" className="w-44 h-44">
+              {/* Outer decorative ring */}
+              <circle cx="100" cy="100" r="85" fill="none" stroke="#f9fafb" strokeWidth="4" />
+              {/* Benchmark markers */}
+              <circle cx="100" cy="100" r="75" fill="none" stroke="#e5e7eb" strokeWidth="2" strokeDasharray="3 3" />
+              {/* Background ring */}
+              <circle cx="100" cy="100" r="65" fill="none" stroke="#f3f4f6" strokeWidth="16" />
+              {/* Progress ring - only render if there's actual progress */}
+              {analytics.engagementMetrics.openRate > 0 && (
+                <circle
+                  cx="100"
+                  cy="100"
+                  r="65"
+                  fill="none"
+                  stroke="url(#openGradient2)"
+                  strokeWidth="16"
+                  strokeLinecap="round"
+                  strokeDasharray={`${Math.min(analytics.engagementMetrics.openRate, 100) * 4.08} 408`}
+                  transform="rotate(-90 100 100)"
+                  className="transition-all duration-1000 ease-out"
+                  style={{ filter: 'drop-shadow(0 2px 8px rgba(245, 158, 11, 0.4))' }}
                 />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          {/* Center Stats */}
-          <div className="text-center -mt-24 mb-16 relative z-10">
-            <p className="text-3xl font-bold text-amber-600">{analytics.engagementMetrics.openRate}%</p>
-            <p className="text-xs text-gray-500">Open Rate</p>
-          </div>
-          {/* Legend */}
-          <div className="flex justify-center gap-4 pt-3 border-t">
-            <div className="flex items-center gap-1.5 text-sm">
-              <div className="w-3 h-3 rounded-full bg-amber-500" />
-              <span className="text-gray-600">Opened</span>
-              <span className="font-medium text-gray-900">({analytics.engagementMetrics.uniqueOpens})</span>
+              )}
+              {/* Industry benchmark indicator at 20% */}
+              <circle
+                cx="100"
+                cy="100"
+                r="65"
+                fill="none"
+                stroke="transparent"
+                strokeWidth="16"
+              >
+                <title>Industry Average: ~20%</title>
+              </circle>
+              <defs>
+                <linearGradient id="openGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#f59e0b" />
+                  <stop offset="50%" stopColor="#fbbf24" />
+                  <stop offset="100%" stopColor="#f59e0b" />
+                </linearGradient>
+              </defs>
+            </svg>
+            {/* Center content */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              <p className="text-5xl font-bold bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">
+                {analytics.engagementMetrics.openRate}%
+              </p>
+              <p className="text-sm text-gray-500 mt-1">of delivered emails</p>
             </div>
-            <div className="flex items-center gap-1.5 text-sm">
-              <div className="w-3 h-3 rounded-full bg-gray-200" />
-              <span className="text-gray-600">Not Opened</span>
-              <span className="font-medium text-gray-900">({Math.max(0, analytics.deliveryMetrics.delivered - analytics.engagementMetrics.uniqueOpens)})</span>
+          </div>
+
+          {/* Stats breakdown */}
+          <div className="mt-3 pt-3 border-t space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4 text-amber-500" />
+                <span className="text-sm text-gray-600">Unique Opens</span>
+              </div>
+              <span className="font-bold text-gray-900">{analytics.engagementMetrics.uniqueOpens.toLocaleString()}</span>
             </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mail className="w-4 h-4 text-gray-400" />
+                <span className="text-sm text-gray-600">Total Opens</span>
+              </div>
+              <span className="font-bold text-gray-900">{analytics.engagementMetrics.opens.toLocaleString()}</span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full flex">
+                <div
+                  className="bg-gradient-to-r from-amber-400 to-amber-500"
+                  style={{ width: `${analytics.engagementMetrics.openRate}%` }}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 text-center">
+              Industry avg: ~20% • Your rate is {analytics.engagementMetrics.openRate >= 20 ? 'above' : 'below'} average
+            </p>
           </div>
         </div>
 
-        {/* Click Rate Donut Chart */}
+        {/* Click Rate - Enhanced with funnel context */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Click Rate</h2>
-            <MousePointer className="w-5 h-5 text-purple-500" />
-          </div>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={[
-                    { name: 'Clicked', value: analytics.engagementMetrics.uniqueClicks, color: '#8b5cf6' },
-                    { name: 'Not Clicked', value: Math.max(0, analytics.engagementMetrics.uniqueOpens - analytics.engagementMetrics.uniqueClicks), color: '#e5e7eb' },
-                  ]}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  dataKey="value"
-                  labelLine={false}
-                >
-                  <Cell fill="#8b5cf6" />
-                  <Cell fill="#e5e7eb" />
-                </Pie>
-                <Tooltip
-                  formatter={(value: number) => [value.toLocaleString(), 'Count']}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          {/* Center Stats */}
-          <div className="text-center -mt-24 mb-16 relative z-10">
-            <p className="text-3xl font-bold text-purple-600">{analytics.engagementMetrics.clickThroughRate}%</p>
-            <p className="text-xs text-gray-500">Click-Through Rate</p>
-          </div>
-          {/* Legend */}
-          <div className="flex justify-center gap-4 pt-3 border-t">
-            <div className="flex items-center gap-1.5 text-sm">
-              <div className="w-3 h-3 rounded-full bg-purple-500" />
-              <span className="text-gray-600">Clicked</span>
-              <span className="font-medium text-gray-900">({analytics.engagementMetrics.uniqueClicks})</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-sm">
-              <div className="w-3 h-3 rounded-full bg-gray-200" />
-              <span className="text-gray-600">Not Clicked</span>
-              <span className="font-medium text-gray-900">({Math.max(0, analytics.engagementMetrics.uniqueOpens - analytics.engagementMetrics.uniqueClicks)})</span>
+            <h2 className="text-lg font-semibold text-gray-900">Click Performance</h2>
+            <div className={`px-2 py-1 rounded-full text-xs font-medium ${
+              analytics.engagementMetrics.clickThroughRate >= 3 ? 'bg-green-100 text-green-700' :
+              analytics.engagementMetrics.clickThroughRate >= 1 ? 'bg-amber-100 text-amber-700' :
+              analytics.engagementMetrics.clickThroughRate > 0 ? 'bg-blue-100 text-blue-700' :
+              'bg-gray-100 text-gray-600'
+            }`}>
+              {analytics.engagementMetrics.clickThroughRate >= 3 ? 'Excellent' :
+               analytics.engagementMetrics.clickThroughRate >= 1 ? 'Good' :
+               analytics.engagementMetrics.clickThroughRate > 0 ? 'Starting' : 'No Data'}
             </div>
           </div>
+
+          {analytics.engagementMetrics.uniqueClicks > 0 || analytics.engagementMetrics.uniqueOpens > 0 ? (
+            <>
+              <div className="relative h-52 flex items-center justify-center">
+                <svg viewBox="0 0 200 200" className="w-44 h-44">
+                  {/* Outer decorative ring */}
+                  <circle cx="100" cy="100" r="85" fill="none" stroke="#f9fafb" strokeWidth="4" />
+                  {/* Benchmark markers */}
+                  <circle cx="100" cy="100" r="75" fill="none" stroke="#e5e7eb" strokeWidth="2" strokeDasharray="3 3" />
+                  {/* Background ring */}
+                  <circle cx="100" cy="100" r="65" fill="none" stroke="#f3f4f6" strokeWidth="16" />
+                  {/* Progress ring - only render if there's actual progress */}
+                  {analytics.engagementMetrics.clickThroughRate > 0 && (
+                    <circle
+                      cx="100"
+                      cy="100"
+                      r="65"
+                      fill="none"
+                      stroke="url(#clickGradient2)"
+                      strokeWidth="16"
+                      strokeLinecap="round"
+                      strokeDasharray={`${Math.min(analytics.engagementMetrics.clickThroughRate * 10, 100) * 4.08} 408`}
+                      transform="rotate(-90 100 100)"
+                      className="transition-all duration-1000 ease-out"
+                      style={{ filter: 'drop-shadow(0 2px 8px rgba(139, 92, 246, 0.4))' }}
+                    />
+                  )}
+                  <defs>
+                    <linearGradient id="clickGradient2" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#8b5cf6" />
+                      <stop offset="50%" stopColor="#a78bfa" />
+                      <stop offset="100%" stopColor="#8b5cf6" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-5xl font-bold bg-gradient-to-r from-purple-500 to-violet-500 bg-clip-text text-transparent">
+                    {analytics.engagementMetrics.clickThroughRate}%
+                  </p>
+                  <p className="text-sm text-gray-500 mt-1">click-through rate</p>
+                </div>
+              </div>
+
+              <div className="mt-3 pt-3 border-t space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MousePointer className="w-4 h-4 text-purple-500" />
+                    <span className="text-sm text-gray-600">Unique Clicks</span>
+                  </div>
+                  <span className="font-bold text-gray-900">{analytics.engagementMetrics.uniqueClicks.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm text-gray-600">Total Clicks</span>
+                  </div>
+                  <span className="font-bold text-gray-900">{analytics.engagementMetrics.clicks.toLocaleString()}</span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-purple-400 to-purple-500"
+                    style={{ width: `${Math.min(analytics.engagementMetrics.clickThroughRate * 10, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-400 text-center">
+                  Industry avg: ~2-3% • {analytics.engagementMetrics.clickRate}% of opens clicked
+                </p>
+              </div>
+            </>
+          ) : (
+            /* No clicks yet - show helpful state */
+            <div className="h-72 flex flex-col items-center justify-center text-center px-4">
+              <div className="w-20 h-20 bg-purple-50 rounded-full flex items-center justify-center mb-4">
+                <MousePointer className="w-10 h-10 text-purple-300" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-700 mb-2">No Clicks Yet</h3>
+              <p className="text-sm text-gray-500 mb-4">
+                {analytics.engagementMetrics.uniqueOpens > 0
+                  ? `${analytics.engagementMetrics.uniqueOpens} people opened your emails. Add compelling CTAs to drive clicks.`
+                  : 'Start sending emails with clear call-to-actions to track click engagement.'}
+              </p>
+              <div className="text-xs text-gray-400 space-y-1">
+                <p>💡 Tips to improve clicks:</p>
+                <p>• Use action-oriented CTA buttons</p>
+                <p>• Place links above the fold</p>
+                <p>• Create urgency in your copy</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Engagement Funnel */}
-      <div className="grid grid-cols-1 gap-6 mb-6">
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Engagement Funnel</h2>
-            <TrendingUp className="w-5 h-5 text-gray-400" />
-          </div>
-          <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={engagementFunnelData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-                <XAxis type="number" fontSize={12} />
-                <YAxis dataKey="name" type="category" width={80} fontSize={12} />
-                <Tooltip formatter={(value: number) => [value.toLocaleString(), 'Count']} />
-                <Bar dataKey="value" radius={[0, 8, 8, 0]}>
-                  {engagementFunnelData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          {/* Conversion Rates */}
-          <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t">
-            <div className="text-center">
-              <p className="text-lg font-bold text-blue-600">{analytics.deliveryMetrics.sent.toLocaleString()}</p>
-              <p className="text-xs text-gray-500">Sent</p>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-green-600">{analytics.deliveryMetrics.deliveryRate}%</p>
-              <p className="text-xs text-gray-500">Delivered</p>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-amber-600">{analytics.engagementMetrics.openRate}%</p>
-              <p className="text-xs text-gray-500">Opened</p>
-            </div>
-            <div className="text-center">
-              <p className="text-lg font-bold text-purple-600">{analytics.engagementMetrics.clickThroughRate}%</p>
-              <p className="text-xs text-gray-500">Clicked</p>
-            </div>
-          </div>
+      {/* Engagement Funnel - Visual flow */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Engagement Funnel</h2>
+          <span className="text-xs text-gray-500">From sent to click</span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          {[
+            { label: 'Sent', value: analytics.deliveryMetrics.sent, color: 'blue', icon: Send },
+            { label: 'Delivered', value: analytics.deliveryMetrics.delivered, color: 'green', icon: CheckCircle },
+            { label: 'Opened', value: analytics.engagementMetrics.uniqueOpens, color: 'amber', icon: Eye },
+            { label: 'Clicked', value: analytics.engagementMetrics.uniqueClicks, color: 'purple', icon: MousePointer },
+          ].map((step, idx, arr) => {
+            const prevValue = idx > 0 ? arr[idx - 1].value : step.value;
+            const rate = prevValue > 0 ? ((step.value / prevValue) * 100).toFixed(1) : '0';
+            const Icon = step.icon;
+            const colorClasses: Record<string, { bg: string; text: string; bar: string }> = {
+              blue: { bg: 'bg-blue-50', text: 'text-blue-600', bar: 'from-blue-400 to-blue-500' },
+              green: { bg: 'bg-green-50', text: 'text-green-600', bar: 'from-green-400 to-green-500' },
+              amber: { bg: 'bg-amber-50', text: 'text-amber-600', bar: 'from-amber-400 to-amber-500' },
+              purple: { bg: 'bg-purple-50', text: 'text-purple-600', bar: 'from-purple-400 to-purple-500' },
+            };
+            const colors = colorClasses[step.color];
+
+            return (
+              <div key={step.label} className="flex-1 flex items-center">
+                <div className={`flex-1 p-4 rounded-xl ${colors.bg} text-center`}>
+                  <Icon className={`w-5 h-5 ${colors.text} mx-auto mb-2`} />
+                  <p className={`text-2xl font-bold ${colors.text}`}>{step.value.toLocaleString()}</p>
+                  <p className="text-xs text-gray-600 mt-1">{step.label}</p>
+                  {idx > 0 && (
+                    <p className="text-xs text-gray-400 mt-1">{rate}% of {arr[idx-1].label.toLowerCase()}</p>
+                  )}
+                </div>
+                {idx < arr.length - 1 && (
+                  <div className="w-8 flex items-center justify-center">
+                    <div className="w-4 h-0.5 bg-gray-200" />
+                    <div className="w-0 h-0 border-t-4 border-b-4 border-l-4 border-transparent border-l-gray-200" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 

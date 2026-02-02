@@ -1,3 +1,9 @@
+// =============================================================================
+// ALWAYS USE PRODUCTION DATABASE FOR ALL OPERATIONS
+// URL: postgresql://postgres:postgres@email-marketing-postgres:5432/email_marketing
+// This is the only database with real data - no staging/dev DB exists
+// =============================================================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -160,6 +166,15 @@ model Campaign {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
 
+  // Email validation metrics for the campaign
+  totalContacts       Int @default(0) @map("total_contacts")
+  validatedContacts   Int @default(0) @map("validated_contacts")
+  validEmails         Int @default(0) @map("valid_emails")
+  invalidEmails       Int @default(0) @map("invalid_emails")
+  riskyEmails         Int @default(0) @map("risky_emails")
+  blockedEmails       Int @default(0) @map("blocked_emails")
+  validationRate      Float @default(0) @map("validation_rate")  // % of valid emails
+
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   businesses      Business[]
   uploads         Upload[]
@@ -233,14 +248,15 @@ model Business {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  user          User?                 @relation(fields: [userId], references: [id])
-  campaign      Campaign?             @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  contacts      Contact[]
-  evidence      BusinessEvidence[]
-  observations  IndustryObservation[]
-  emailDrafts   EmailDraft[]
-  sequenceLeads SequenceLead[]
-  inboundEmails InboundEmail[]
+  user                   User?                    @relation(fields: [userId], references: [id])
+  campaign               Campaign?                @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  contacts               Contact[]
+  evidence               BusinessEvidence[]
+  observations           IndustryObservation[]
+  emailDrafts            EmailDraft[]
+  sequenceLeads          SequenceLead[]
+  inboundEmails          InboundEmail[]
+  validatedEmailBusiness ValidatedEmailBusiness?
 
   @@index([userId])
   @@index([campaignId])
@@ -251,6 +267,15 @@ model Business {
 }
 
 // Contacts table
+// Email validation status enum
+enum EmailValidationStatus {
+  PENDING       // Not yet validated
+  VALID         // All checks passed
+  INVALID       // Failed validation (bad format, no MX, etc.)
+  RISKY         // Passed but with warnings (role account, free email, etc.)
+  BLOCKED       // In suppression list
+}
+
 model Contact {
   id               String   @id @default(uuid())
   businessId       String   @map("business_id")
@@ -260,6 +285,13 @@ model Contact {
   phone            String?  // Contact phone number
   linkedinUrl      String?  @map("linkedin_url") // LinkedIn profile
   sourceConfidence Int      @default(0) @map("source_confidence")
+
+  // Email validation fields
+  emailValidated    Boolean               @default(false) @map("email_validated")
+  validationStatus  EmailValidationStatus @default(PENDING) @map("validation_status")
+  validatedAt       DateTime?             @map("validated_at")
+  validationDetails Json                  @default("{}") @map("validation_details")
+  // validationDetails: { formatValid, mxValid, isDisposable, isRoleAccount, isBlocked, reason }
 
   // Dynamic columns - stores ALL extra contact data from imports for AI to use
   customData       Json     @default("{}") @map("custom_data") // { columnName: value, ... }
@@ -273,6 +305,7 @@ model Contact {
 
   @@index([businessId])
   @@index([createdAt])
+  @@index([validationStatus])
   @@map("contacts")
 }
 
@@ -335,7 +368,7 @@ model EmailDraft {
   businessId            String       @map("business_id")
   contactId             String       @map("contact_id")
   fromName              String       @default("CallSphere") @map("from_name")
-  fromEmail             String       @default("sagar@callsphere.tech") @map("from_email")
+  fromEmail             String       @default("greetings@callsphere.tech") @map("from_email")
   subject               String
   bodyText              String       @map("body_text")
   footerText            String       @map("footer_text")
@@ -617,15 +650,21 @@ model InboundEmail {
   isStarred       Boolean  @default(false) @map("is_starred")
   // Raw data
   rawPayload      Json?    @map("raw_payload")
+  // S3 storage info (for large emails bypassing SNS 256KB limit)
+  s3BucketName    String?  @map("s3_bucket_name")
+  s3ObjectKey     String?  @map("s3_object_key")
+  // Attachment tracking
+  hasAttachments  Boolean  @default(false) @map("has_attachments")
   // Timestamps
   receivedAt      DateTime @default(now()) @map("received_at")
   createdAt       DateTime @default(now()) @map("created_at")
 
   // Relations
-  originalEmail EmailDraft?  @relation(fields: [originalEmailId], references: [id])
-  contact       Contact?     @relation(fields: [contactId], references: [id])
-  business      Business?    @relation(fields: [businessId], references: [id])
-  sesIdentity   SESIdentity? @relation(fields: [sesIdentityId], references: [id])
+  originalEmail EmailDraft?       @relation(fields: [originalEmailId], references: [id])
+  contact       Contact?          @relation(fields: [contactId], references: [id])
+  business      Business?         @relation(fields: [businessId], references: [id])
+  sesIdentity   SESIdentity?      @relation(fields: [sesIdentityId], references: [id])
+  attachments   EmailAttachment[]
 
   @@index([fromEmail])
   @@index([threadId])
@@ -633,6 +672,25 @@ model InboundEmail {
   @@index([isRead])
   @@index([receivedAt])
   @@map("inbound_emails")
+}
+
+// Email attachments stored in S3
+model EmailAttachment {
+  id              String   @id @default(uuid())
+  inboundEmailId  String   @map("inbound_email_id")
+  filename        String
+  contentType     String   @map("content_type")
+  sizeBytes       Int      @map("size_bytes")
+  storagePath     String   @map("storage_path")
+  storageType     String   @default("s3") @map("storage_type")
+  contentId       String?  @map("content_id") // For inline images (CID)
+  isInline        Boolean  @default(false) @map("is_inline")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  inboundEmail    InboundEmail @relation(fields: [inboundEmailId], references: [id], onDelete: Cascade)
+
+  @@index([inboundEmailId])
+  @@map("email_attachments")
 }
 
 // =============================================================================
@@ -844,6 +902,56 @@ model BusinessColumn {
   @@unique([campaignId, key])
   @@index([campaignId])
   @@map("business_columns")
+}
+
+// =============================================================================
+// VALIDATED EMAIL BUSINESSES
+// Tracks businesses with successfully delivered emails for reputation tracking
+// =============================================================================
+
+model ValidatedEmailBusiness {
+  id                  String    @id @default(uuid())
+  businessId          String    @unique @map("business_id")
+
+  // First and last successful delivery timestamps
+  firstValidatedAt    DateTime  @default(now()) @map("first_validated_at")
+  lastValidatedAt     DateTime  @default(now()) @map("last_validated_at")
+
+  // Email metrics for this business
+  totalEmailsSent     Int       @default(0) @map("total_emails_sent")
+  totalDelivered      Int       @default(0) @map("total_delivered")
+  totalOpened         Int       @default(0) @map("total_opened")
+  totalClicked        Int       @default(0) @map("total_clicked")
+  totalReplied        Int       @default(0) @map("total_replied")
+  totalBounced        Int       @default(0) @map("total_bounced")
+  totalComplaints     Int       @default(0) @map("total_complaints")
+
+  // Calculated rates (stored for quick queries)
+  deliveryRate        Float     @default(0) @map("delivery_rate")      // delivered / sent
+  openRate            Float     @default(0) @map("open_rate")          // opened / delivered
+  clickRate           Float     @default(0) @map("click_rate")         // clicked / delivered
+  replyRate           Float     @default(0) @map("reply_rate")         // replied / delivered
+  bounceRate          Float     @default(0) @map("bounce_rate")        // bounced / sent
+  complaintRate       Float     @default(0) @map("complaint_rate")     // complaints / sent
+
+  // Validation status
+  isValidated         Boolean   @default(true) @map("is_validated")    // Email deliverability confirmed
+  validationScore     Int       @default(100) @map("validation_score") // 0-100 score based on metrics
+
+  // Last contact email that was validated
+  lastValidatedEmail  String?   @map("last_validated_email")
+
+  // Timestamps
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  business            Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([validationScore])
+  @@index([isValidated])
+  @@index([lastValidatedAt])
+  @@map("validated_email_businesses")
 }
 
 // =============================================================================

@@ -345,9 +345,11 @@ export const POST = createApiHandler(
 
     const errors: Array<{ row: number; message: string }> = [];
     const invalidEmails: Array<{ row: number; email: string; reason: string }> = [];
+    const duplicateEmails: Array<{ row: number; email: string }> = [];
     let created = 0;
     let skipped = 0;
     let blockedCount = 0;
+    let duplicateCount = 0;
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -362,22 +364,56 @@ export const POST = createApiHandler(
         : findColumn(row, getFieldSynonyms('name'));
 
       const missingFields: string[] = [];
+      let validationStatus: 'VALID' | 'INVALID' | 'RISKY' | 'BLOCKED' = 'VALID';
+      let validationDetails: {
+        formatValid: boolean;
+        mxValid: boolean;
+        isDisposable: boolean;
+        isRoleAccount: boolean;
+        isBlocked: boolean;
+        reason?: string;
+        warnings: string[];
+      } = {
+        formatValid: false,
+        mxValid: false,
+        isDisposable: false,
+        isRoleAccount: false,
+        isBlocked: false,
+        warnings: [],
+      };
+
       if (!email) {
         missingFields.push('email');
       } else {
         // Full email validation with MX record check
         const validation = await validateEmail(email);
+        validationDetails.formatValid = !validation.errors.some(e => e.includes('format') || e.includes('Invalid'));
+        validationDetails.mxValid = !validation.errors.some(e => e.includes('MX') || e.includes('mail server'));
+        validationDetails.isDisposable = validation.errors.some(e => e.includes('disposable') || e.includes('temporary'));
+        validationDetails.isRoleAccount = validation.warnings?.some(w => w.includes('role')) ?? false;
+        validationDetails.warnings = validation.warnings || [];
+
         if (!validation.isValid) {
           const reason = validation.errors.join('; ');
+          validationDetails.reason = reason;
+          validationStatus = 'INVALID';
           invalidEmails.push({ row: rowNum, email, reason });
           errors.push({ row: rowNum, message: `Invalid email: ${reason}` });
           skipped++;
           continue;
         }
 
+        // Check for risky emails (role accounts, etc.)
+        if (validationDetails.isRoleAccount || validationDetails.warnings.length > 0) {
+          validationStatus = 'RISKY';
+        }
+
         // Check if email is in suppression list (bounced/complained before)
         const blocked = await isEmailBlocked(email, prisma);
         if (blocked.blocked) {
+          validationDetails.isBlocked = true;
+          validationDetails.reason = blocked.reason || 'Blocked';
+          validationStatus = 'BLOCKED';
           invalidEmails.push({ row: rowNum, email, reason: blocked.reason || 'Blocked' });
           errors.push({ row: rowNum, message: `Email blocked: ${blocked.reason}` });
           blockedCount++;
@@ -424,7 +460,22 @@ export const POST = createApiHandler(
 
       try {
         const businessName = name!;
-        const contactEmail = email!;
+        const contactEmail = email!.toLowerCase();
+
+        // Check if contact with this email already exists BEFORE transaction
+        // Skip duplicate emails entirely - don't create or update
+        const existingContact = await prisma.contact.findUnique({
+          where: { email: contactEmail },
+          select: { id: true, email: true },
+        });
+
+        if (existingContact) {
+          // Skip this row - email already exists in the system
+          duplicateEmails.push({ row: rowNum, email: contactEmail });
+          duplicateCount++;
+          skipped++;
+          continue;
+        }
 
         // Use transaction to ensure business and contact are created together
         // If contact creation fails, business creation is rolled back
@@ -467,40 +518,24 @@ export const POST = createApiHandler(
             businessId = newBusiness.id;
           }
 
-          // Handle contact - must succeed or entire transaction rolls back
-          const existingContact = await tx.contact.findUnique({
-            where: { email: contactEmail.toLowerCase() },
+          // Create contact - we already checked it doesn't exist above
+          await tx.contact.create({
+            data: {
+              businessId,
+              email: contactEmail,
+              name: contactName,
+              role,
+              phone,
+              linkedinUrl,
+              customData, // Store extra columns on contact too for AI
+              sourceConfidence: 80,
+              // Email validation fields
+              emailValidated: true,
+              validationStatus,
+              validatedAt: new Date(),
+              validationDetails,
+            },
           });
-
-          if (!existingContact) {
-            await tx.contact.create({
-              data: {
-                businessId,
-                email: contactEmail.toLowerCase(),
-                name: contactName,
-                role,
-                phone,
-                linkedinUrl,
-                customData, // Store extra columns on contact too for AI
-                sourceConfidence: 80,
-              },
-            });
-          } else {
-            // Update existing contact with any new info
-            const existingContactData = (existingContact.customData as Record<string, string>) || {};
-            const mergedContactData = { ...existingContactData, ...customData };
-
-            await tx.contact.update({
-              where: { id: existingContact.id },
-              data: {
-                name: contactName || existingContact.name,
-                role: role || existingContact.role,
-                phone: phone || existingContact.phone,
-                linkedinUrl: linkedinUrl || existingContact.linkedinUrl,
-                customData: mergedContactData,
-              },
-            });
-          }
         });
 
         created++;
@@ -524,13 +559,44 @@ export const POST = createApiHandler(
       },
     });
 
+    // Update campaign validation metrics
+    const validationStats = await prisma.contact.groupBy({
+      by: ['validationStatus'],
+      where: {
+        business: { campaignId },
+      },
+      _count: true,
+    });
+
+    const totalContacts = validationStats.reduce((sum, s) => sum + s._count, 0);
+    const validEmails = validationStats.find(s => s.validationStatus === 'VALID')?._count || 0;
+    const invalidEmailsCount = validationStats.find(s => s.validationStatus === 'INVALID')?._count || 0;
+    const riskyEmails = validationStats.find(s => s.validationStatus === 'RISKY')?._count || 0;
+    const blockedEmailsCount = validationStats.find(s => s.validationStatus === 'BLOCKED')?._count || 0;
+    const validationRate = totalContacts > 0 ? ((validEmails + riskyEmails) / totalContacts) * 100 : 0;
+
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: {
+        totalContacts,
+        validatedContacts: totalContacts, // All contacts were validated during import
+        validEmails,
+        invalidEmails: invalidEmailsCount,
+        riskyEmails,
+        blockedEmails: blockedEmailsCount,
+        validationRate: Math.round(validationRate * 100) / 100,
+      },
+    });
+
     logger.info('Import completed', {
       created,
       skipped,
       blockedCount,
+      duplicateCount,
       invalidEmailCount: invalidEmails.length,
       totalColumns: headers.length,
       mappedColumns: Object.keys(mappingDict).length,
+      validationStats: { totalContacts, validEmails, invalidEmailsCount, riskyEmails, validationRate },
     });
 
     return jsonResponse({
@@ -539,9 +605,11 @@ export const POST = createApiHandler(
       created,
       skipped,
       blockedCount,
+      duplicateCount,
       invalidEmailCount: invalidEmails.length,
       errors: errors.slice(0, 50),
       invalidEmails: invalidEmails.slice(0, 20), // Show first 20 invalid emails
+      duplicateEmails: duplicateEmails.slice(0, 20), // Show first 20 duplicate emails
       campaignId,
       columnStats: {
         totalColumns: headers.length,

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState, useCallback, memo, useEffect } from 'react';
+import { useState, useCallback, memo, useEffect, useRef } from 'react';
 import {
   Upload,
   Building2,
@@ -36,6 +36,17 @@ interface SidebarCounts {
   leads: number;
 }
 
+// Map badge keys to their corresponding paths
+const badgeKeyToPath: Record<keyof SidebarCounts, string> = {
+  campaigns: '/dashboard/campaigns',
+  companies: '/dashboard/businesses',
+  emails: '/dashboard/emails',
+  pendingEmails: '/dashboard/emails',
+  inbox: '/dashboard/inbox',
+  uploads: '/dashboard/uploads',
+  leads: '/dashboard/leads',
+};
+
 // Badge keys for each nav item
 type BadgeKey = keyof SidebarCounts | null;
 
@@ -60,7 +71,7 @@ const createNav: NavItem[] = [
 const manageNav: NavItem[] = [
   { name: 'Emails', href: '/dashboard/emails', icon: Mail, badgeKey: 'emails', badgeColor: 'danger' },
   { name: 'Leads', href: '/dashboard/leads', icon: UserCheck, badgeKey: 'leads', badgeColor: 'success' },
-  { name: 'Inbox', href: '/dashboard/unibox', icon: Inbox, badgeKey: 'inbox', badgeColor: 'danger' },
+  { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox, badgeKey: 'inbox', badgeColor: 'danger' },
   { name: 'Activity', href: '/dashboard/email-logs', icon: ScrollText },
   { name: 'Downloads', href: '/dashboard/exports', icon: Download },
   { name: 'Reports', href: '/dashboard/analytics', icon: BarChart3 },
@@ -86,12 +97,14 @@ const NavSection = memo(function NavSection({
   items,
   pathname,
   counts,
+  seenSections,
   onNavigate
 }: {
   title: string;
   items: NavItem[];
   pathname: string;
   counts: SidebarCounts | null;
+  seenSections: Set<string>;
   onNavigate?: () => void;
 }) {
   return (
@@ -103,8 +116,15 @@ const NavSection = memo(function NavSection({
         const isActive = pathname === item.href ||
           (item.href !== '/dashboard' && pathname.startsWith(item.href + '/'));
 
-        const badgeCount = item.badgeKey && counts ? counts[item.badgeKey] : 0;
-        const showBadge = badgeCount > 0;
+        // Get raw count from server
+        const rawCount = item.badgeKey && counts ? counts[item.badgeKey] : 0;
+
+        // Check if this section has been seen - if so, hide the badge
+        const sectionPath = item.badgeKey ? badgeKeyToPath[item.badgeKey] : '';
+        const hasBeenSeen = seenSections.has(sectionPath);
+
+        // Only show badge if count > 0 AND section hasn't been seen recently
+        const showBadge = rawCount > 0 && !hasBeenSeen;
 
         return (
           <Link
@@ -127,7 +147,7 @@ const NavSection = memo(function NavSection({
                 text-xs font-bold rounded-full
                 ${isActive ? 'bg-white/20 text-white' : badgeColors[item.badgeColor || 'primary']}
               `}>
-                {badgeCount > 99 ? '99+' : badgeCount}
+                {rawCount > 99 ? '99+' : rawCount}
               </span>
             )}
           </Link>
@@ -148,52 +168,136 @@ const Sidebar = memo(function Sidebar({ isOpen, onClose }: SidebarProps) {
   const [loggingOut, setLoggingOut] = useState(false);
   const { isAdmin, user, loading } = useAuth();
   const [counts, setCounts] = useState<SidebarCounts | null>(null);
+  const [seenSections, setSeenSections] = useState<Set<string>>(new Set());
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const lastCountsRef = useRef<SidebarCounts | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fetch sidebar counts
+  // Connect to SSE stream for real-time counts
   useEffect(() => {
-    const fetchCounts = async () => {
-      try {
-        const res = await fetch('/api/sidebar-counts');
-        if (res.ok) {
-          const data = await res.json();
-          setCounts(data);
-        }
-      } catch (error) {
-        console.error('Error fetching sidebar counts:', error);
+    let retryCount = 0;
+    const maxRetries = 5;
+    const baseRetryDelay = 1000;
+
+    const connect = () => {
+      // Close existing connection
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
       }
+
+      const eventSource = new EventSource('/api/sidebar-counts/stream');
+      eventSourceRef.current = eventSource;
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setCounts(data);
+          lastCountsRef.current = data;
+          retryCount = 0; // Reset retry count on successful message
+        } catch (error) {
+          console.error('Error parsing SSE data:', error);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource.close();
+
+        // Exponential backoff retry
+        if (retryCount < maxRetries) {
+          const delay = baseRetryDelay * Math.pow(2, retryCount);
+          retryCount++;
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, delay);
+        } else {
+          // Fall back to polling after max retries
+          console.warn('SSE connection failed, falling back to polling');
+          fallbackToPolling();
+        }
+      };
     };
 
-    // Initial fetch
-    fetchCounts();
+    const fallbackToPolling = () => {
+      const fetchCounts = async () => {
+        try {
+          const res = await fetch('/api/sidebar-counts');
+          if (res.ok) {
+            const data = await res.json();
+            setCounts(data);
+            lastCountsRef.current = data;
+          }
+        } catch (error) {
+          console.error('Error fetching sidebar counts:', error);
+        }
+      };
 
-    // Refresh counts every 30 seconds
-    const interval = setInterval(fetchCounts, 30000);
+      fetchCounts();
+      const interval = setInterval(fetchCounts, 30000);
+      return () => clearInterval(interval);
+    };
 
-    return () => clearInterval(interval);
+    connect();
+
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+    };
   }, []);
 
-  // Refetch counts when pathname changes (user navigates)
+  // Mark section as "seen" when user navigates to it
   useEffect(() => {
-    const fetchCounts = async () => {
-      try {
-        const res = await fetch('/api/sidebar-counts');
-        if (res.ok) {
-          const data = await res.json();
-          setCounts(data);
-        }
-      } catch (error) {
-        // Silent fail
-      }
-    };
+    // Find which badge key corresponds to the current path
+    const matchingKey = Object.entries(badgeKeyToPath).find(([, path]) => {
+      return pathname === path || pathname.startsWith(path + '/');
+    });
 
-    // Small delay to allow any data changes to be saved
-    const timeout = setTimeout(fetchCounts, 500);
-    return () => clearTimeout(timeout);
+    if (matchingKey) {
+      const sectionPath = matchingKey[1];
+      setSeenSections(prev => new Set(prev).add(sectionPath));
+    }
   }, [pathname]);
+
+  // Reset "seen" status when counts change significantly (new items added)
+  useEffect(() => {
+    if (!counts || !lastCountsRef.current) return;
+
+    // Check for increases in counts - if count increased, reset "seen" for that section
+    const keysToReset: string[] = [];
+
+    (Object.keys(counts) as Array<keyof SidebarCounts>).forEach((key) => {
+      const prevCount = lastCountsRef.current?.[key] || 0;
+      const newCount = counts[key];
+
+      // If count increased, this section has new items - reset "seen"
+      if (newCount > prevCount) {
+        const sectionPath = badgeKeyToPath[key];
+        if (sectionPath) {
+          keysToReset.push(sectionPath);
+        }
+      }
+    });
+
+    if (keysToReset.length > 0) {
+      setSeenSections(prev => {
+        const newSet = new Set(prev);
+        keysToReset.forEach(path => newSet.delete(path));
+        return newSet;
+      });
+    }
+  }, [counts]);
 
   const handleLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
+      // Close SSE connection before logout
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
       await fetch('/api/auth/logout', { method: 'POST' });
       router.push('/login');
     } catch (error) {
@@ -233,10 +337,10 @@ const Sidebar = memo(function Sidebar({ isOpen, onClose }: SidebarProps) {
             </button>
           </div>
           <nav className="flex-1 overflow-y-auto px-3 py-4">
-            <NavSection title="Create" items={createNav} pathname={pathname} counts={counts} onNavigate={onClose} />
-            <NavSection title="Manage" items={manageNav} pathname={pathname} counts={counts} onNavigate={onClose} />
+            <NavSection title="Create" items={createNav} pathname={pathname} counts={counts} seenSections={seenSections} onNavigate={onClose} />
+            <NavSection title="Manage" items={manageNav} pathname={pathname} counts={counts} seenSections={seenSections} onNavigate={onClose} />
             {!loading && isAdmin && (
-              <NavSection title="Admin" items={adminNav} pathname={pathname} counts={counts} onNavigate={onClose} />
+              <NavSection title="Admin" items={adminNav} pathname={pathname} counts={counts} seenSections={seenSections} onNavigate={onClose} />
             )}
           </nav>
           <div className="border-t border-gray-800 p-4 shrink-0 space-y-3">

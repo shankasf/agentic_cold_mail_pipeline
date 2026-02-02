@@ -660,22 +660,30 @@ function EmailsPageContent() {
     if (selectedIds.length === 0) return;
     if (!confirm(`Are you sure you want to delete ${selectedIds.length} email(s)? This action cannot be undone.`)) return;
 
+    const idsToDelete = [...selectedIds];
+
+    // Optimistic update - remove from UI immediately
+    setEmails((prev) => prev.filter((e) => !idsToDelete.includes(e.id)));
+    setTotalEmails((prev) => prev - idsToDelete.length);
+    setSelectedIds([]);
+    setAllPagesSelected(false);
+
     try {
       const res = await fetch('/api/emails/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emailIds: selectedIds }),
+        body: JSON.stringify({ emailIds: idsToDelete }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
+        // Revert on error
+        fetchEmails();
         throw new Error(data.error?.message || data.error || 'Failed to delete emails');
       }
 
       alert(`Deleted ${data.deleted} email(s)`);
-      setSelectedIds([]);
-      fetchEmails();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to delete emails');
     }
@@ -683,6 +691,10 @@ function EmailsPageContent() {
 
   const handleDeleteEmail = async (emailId: string) => {
     if (!confirm('Are you sure you want to delete this email? This action cannot be undone.')) return;
+
+    // Optimistic update - remove from UI immediately
+    setEmails((prev) => prev.filter((e) => e.id !== emailId));
+    setTotalEmails((prev) => prev - 1);
 
     try {
       const res = await fetch('/api/emails/delete', {
@@ -694,25 +706,30 @@ function EmailsPageContent() {
       const data = await res.json();
 
       if (!res.ok) {
+        // Revert on error
+        fetchEmails();
         throw new Error(data.error?.message || data.error || 'Failed to delete email');
       }
-
-      fetchEmails();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to delete email');
     }
   };
 
   const handleApproveEmail = async (emailId: string) => {
+    // Optimistic update
+    setEmails((prev) =>
+      prev.map((e) => (e.id === emailId ? { ...e, status: 'APPROVED' } : e))
+    );
+
     try {
       const res = await fetch(`/api/emails/${emailId}/approve`, { method: 'POST' });
       const data = await res.json();
 
       if (!res.ok) {
+        // Revert on error
+        fetchEmails();
         throw new Error(data.error?.message || data.error || 'Failed to approve email');
       }
-
-      fetchEmails();
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Failed to approve email');
     }

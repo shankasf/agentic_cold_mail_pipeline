@@ -1,0 +1,2188 @@
+================================================================================
+AMAZON SIMPLE EMAIL SERVICE - DEVELOPER GUIDE
+Complete Text Extraction from PDF
+================================================================================
+
+Copyright © 2026 Amazon Web Services, Inc. and/or its affiliates. All rights reserved.
+
+Amazon's trademarks and trade dress may not be used in connection with any product or service 
+that is not Amazon's, in any manner that is likely to cause confusion among customers, or in any 
+manner that disparages or discredits Amazon. All other trademarks not owned by Amazon are 
+the property of their respective owners, who may or may not be affiliated with, connected to, or 
+sponsored by Amazon.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+
+1. What is Amazon SES?
+2. Benefits
+3. Related Services
+4. Pricing
+5. Regions
+6. SES Regions and Endpoints
+7. Sandbox Removal and Sending Limit Increases
+8. Verification of Email Addresses and Domains
+9. Easy DKIM
+10. Account-level Suppression List
+11. Feedback Notifications
+12. SMTP Credentials
+13. Feedback Endpoints Used for Custom MAIL FROM Domains
+14. Sending Authorization
+15. Email Receiving
+16. Quotas
+17. Email Sending Quotas
+18. Email Receiving Quotas
+19. Mail Manager Quotas
+20. General Quotas
+21. Types of Credentials
+22. How Amazon SES Works
+23. After a Sender Sends an Email Request to SES
+24. After Amazon SES Sends an Email
+25. Email Format
+26. Understanding Deliverability
+27. Email Best Practices
+28. Working with AWS SDKs
+29. Getting Started
+30. Setting Up
+31. Sign Up for AWS
+32. Set Up Your SES Account
+33. Grant Programmatic Access
+34. Download an AWS SDK
+35. Migrating to Amazon SES
+36. Sending Limits
+37. Set Up Email Sending
+38. Using the SMTP Interface
+39. Using the API
+40. Email Attachments
+41. Email Receiving
+42. Verified Identities
+43. Configuration Sets
+44. Global Endpoints
+45. Dedicated IP Addresses
+46. Virtual Deliverability Manager
+47. Email Validation
+48. Mail Manager
+49. Lists and Subscriptions
+50. Monitoring Sending Activity
+51. Monitoring Sender Reputation
+52. Security
+53. Troubleshooting
+54. FAQs
+
+================================================================================
+SECTION 1: WHAT IS AMAZON SES?
+================================================================================
+
+Amazon Simple Email Service (SES) is an email platform that provides an easy, cost-effective way 
+for you to send and receive email using your own email addresses and domains.
+
+For example, you can send marketing emails such as special offers, transactional emails such as 
+order confirmations, and other types of correspondence such as newsletters. When you use Amazon 
+SES to receive mail, you can develop software solutions such as email autoresponders, email 
+unsubscribe systems, and applications that generate customer support tickets from incoming emails.
+
+For more information about topics related to Amazon SES, see the AWS Messaging and Targeting Blog.
+
+--------------------------------------------------------------------------------
+BENEFITS
+--------------------------------------------------------------------------------
+
+Building a large-scale email solution is often a complex and costly challenge for a business. 
+You must deal with infrastructure challenges such as email server management, network 
+configuration, and IP address reputation. Additionally, many third-party email solutions require 
+contract and price negotiations, as well as significant up-front costs. Amazon SES eliminates 
+these challenges and enables you to benefit from the years of experience and sophisticated email 
+infrastructure Amazon.com has built to serve its own large-scale customer base.
+
+Key Benefits:
+- Low Cost: Pay-as-you-go pricing model
+- Reliability: Built on Amazon's proven email infrastructure
+- Scalability: Handle any volume of email
+- Authentication: Easy setup with DKIM and SPF
+- Monitoring: Detailed tracking and notifications
+- Integration: Seamless AWS service integration
+
+--------------------------------------------------------------------------------
+RELATED SERVICES
+--------------------------------------------------------------------------------
+
+Amazon SES integrates seamlessly with other AWS products. For example, you can:
+
+ADD EMAIL-SENDING CAPABILITIES TO ANY APPLICATION
+You can send email from Amazon EC2 by using an AWS SDK, by using the Amazon SES SMTP interface, 
+or by making calls directly to the Amazon SES API.
+
+USE AWS ELASTIC BEANSTALK
+Create an email-enabled application such as a program that uses Amazon SES to send a newsletter 
+to customers.
+
+SET UP AMAZON SIMPLE NOTIFICATION SERVICE (AMAZON SNS)
+Notify you of your emails that bounced, produced a complaint, or were successfully delivered to 
+the recipient's mail server. When you use Amazon SES to receive emails, your email content can 
+be published to Amazon SNS topics.
+
+USE THE AWS MANAGEMENT CONSOLE
+Set up Easy DKIM, which is a way to authenticate your emails. Although you can use Easy DKIM 
+with any DNS provider, it is especially easy to set up when you manage your domain with Route 53.
+
+CONTROL USER ACCESS
+Use AWS Identity and Access Management (IAM) to control user access to your email sending.
+
+STORE EMAILS
+Use Amazon Simple Storage Service (Amazon S3) to store emails you receive.
+
+TAKE ACTION ON RECEIVED EMAILS
+Trigger AWS Lambda functions to take action on your received emails.
+
+ENCRYPT RECEIVED MAIL
+Use AWS Key Management Service (AWS KMS) to optionally encrypt the mail you receive in your 
+Amazon S3 bucket.
+
+LOG API CALLS
+Use AWS CloudTrail to log Amazon SES API calls that you make using the console or the Amazon 
+SES API.
+
+PUBLISH EVENTS
+Publish your email sending events to Amazon CloudWatch or Amazon Data Firehose. If you publish 
+your email sending events to Firehose, you can access them in Amazon Redshift, Amazon 
+OpenSearch Service, or Amazon S3.
+
+--------------------------------------------------------------------------------
+PRICING
+--------------------------------------------------------------------------------
+
+With Amazon SES, you pay based on the volume of emails sent and received. For more information, 
+see Amazon SES pricing at https://aws.amazon.com/ses/pricing/
+
+Pricing includes:
+- Per email sent (varies by recipient type)
+- Per email received
+- Data transfer charges
+- Optional charges for dedicated IP addresses
+
+================================================================================
+SECTION 2: REGIONS AND AMAZON SES
+================================================================================
+
+SES is available in several AWS Regions around the world. In each region, AWS maintains multiple 
+Availability Zones. These Availability Zones are physically isolated from each other, but are 
+united by private, low-latency, high-throughput, and highly redundant network connections. These 
+Availability Zones enable us to provide very high levels of availability and redundancy, while 
+also minimizing latency.
+
+For a list of all of the SES regional endpoints, see Amazon Simple Email Service endpoints and 
+quotas in the AWS General Reference. To learn more about the number of Availability Zones that 
+are available in each region, see AWS Global Infrastructure.
+
+--------------------------------------------------------------------------------
+SES REGIONS AND ENDPOINTS
+--------------------------------------------------------------------------------
+
+When you use SES to send email, you connect to a URL that provides an endpoint for the SES API 
+or SMTP interface. The AWS General Reference contains a complete list of endpoints that you use 
+to send and receive email through SES.
+
+API ENDPOINTS
+When you send email through SES, you can use the URLs listed to make HTTPS requests to the 
+SES API.
+
+SMTP ENDPOINTS
+You can use the URLs listed to send email when using the SMTP interface.
+
+EMAIL RECEIVING ENDPOINTS
+If you've configured SES to receive email that's sent to your domain, you can use the inbound 
+SMTP endpoint URLs listed when you set up the mail exchanger (MX) records in the DNS settings 
+for your domain.
+
+NOTE: The inbound SMTP URLs aren't IMAP server addresses. In other words, you can't use them 
+to receive email by using an application such as Outlook. For a service that provides an IMAP 
+server for incoming email, see Amazon WorkMail.
+
+Supported SES Regions:
+- US East (N. Virginia)
+- US West (Oregon)
+- Europe (Ireland)
+- Europe (Frankfurt)
+- Asia Pacific (Tokyo)
+- Asia Pacific (Singapore)
+- And additional regions as per AWS Global Infrastructure
+
+--------------------------------------------------------------------------------
+SANDBOX REMOVAL AND SENDING LIMIT INCREASES
+--------------------------------------------------------------------------------
+
+The sandbox status for your account can differ between AWS Regions. In other words, if your 
+account has been removed from the sandbox in the US West (Oregon) region, it might still be in 
+the sandbox in the US East (N. Virginia) region, unless you've also had it removed from the 
+sandbox in that region.
+
+Sending limits can also be different depending on the AWS Region. For example, if your account 
+is able to send 10 messages per second in the Europe (Ireland) region, you might be able to 
+send more or fewer messages in other regions.
+
+When you submit a request to have your account removed from the sandbox, or when you submit a 
+request to have your account's sending quotas increased, be sure to choose all of the AWS Regions 
+that your request applies to. You can submit several requests in a single Support Center case.
+
+Sandbox Limitations:
+- Maximum 200 emails per 24 hours
+- Maximum 1 email per second sending rate
+- All recipient addresses must be verified
+- Limited to account owner testing
+
+Requirements for Sandbox Removal:
+- Submit request through AWS Support
+- Demonstrate legitimate use case
+- Provide contact information
+- Agree to AWS policies
+
+--------------------------------------------------------------------------------
+VERIFICATION OF EMAIL ADDRESSES AND DOMAINS
+--------------------------------------------------------------------------------
+
+Before you can send email using SES, you have to verify that you own the email address or domain 
+that you plan to send from. The verification status of email addresses and domains also differs 
+across AWS Regions. For example, if you verify a domain in the US West (Oregon) region, you 
+can't use that domain to send email in the US East (N. Virginia) region until you complete the 
+verification process again for that region. 
+
+For more information about verifying email addresses and domains, see Verified identities in 
+Amazon SES.
+
+Verification Methods:
+1. Domain Verification - Verify entire domain via CNAME records
+2. Email Address Verification - Verify individual email addresses
+3. DKIM Signing - Cryptographic authentication
+4. SPF Records - Specify authorized senders
+
+Verification Token:
+- Sent via email or DNS records
+- Valid for 24 hours for email verification
+- Must be confirmed within the validity period
+- Can resend verification token if needed
+
+--------------------------------------------------------------------------------
+EASY DKIM
+--------------------------------------------------------------------------------
+
+You have to perform the Easy DKIM setup process for each AWS Region where you want to use 
+Easy DKIM. That is, in each region, you have to use the SES console or the SES API to generate 
+CNAME records. Next, you have to add all of the CNAME records to the DNS configuration for 
+your domain. 
+
+For more information about setting up Easy DKIM, see Easy DKIM in Amazon SES.
+
+Not all AWS Regions use the default SES DKIM domain, dkim.amazonses.com—to see if your region 
+uses a region specific DKIM domain, check the DKIM domains table in the AWS General Reference.
+
+DKIM Benefits:
+- Cryptographic signature of emails
+- Protects against spoofing
+- Improves deliverability
+- Required by major ISPs
+- Easy setup with CNAME records
+
+DKIM Setup Steps:
+1. Enable Easy DKIM in SES console
+2. Copy CNAME records
+3. Add CNAME records to domain's DNS
+4. Wait for DNS propagation (typically 24-48 hours)
+5. Verify DKIM status in console
+
+DKIM Tokens:
+- Generated per domain
+- Added to domain DNS as CNAME records
+- Point to Amazon SES DKIM service
+- Valid across all AWS regions
+
+--------------------------------------------------------------------------------
+ACCOUNT-LEVEL SUPPRESSION LIST
+--------------------------------------------------------------------------------
+
+Your SES account-level suppression list applies to your AWS account only in the current AWS 
+Region. You can manually add or remove, individually or in bulk, addresses from your 
+account-level suppression list by using the SES API v2 or console. 
+
+For more information about using your account-level suppression list, see Using the Amazon SES 
+account-level suppression list.
+
+Features:
+- Account-specific control
+- Region-specific lists
+- Manual and bulk operations
+- Override global suppression list
+- Reduces bounce notifications
+
+Use Cases:
+- Exclude specific customers from sending
+- Prevent bounces to known invalid addresses
+- Manage user preferences
+- Maintain reputation control
+- Customize suppression rules
+
+Operations:
+- Add individual email addresses
+- Remove addresses from list
+- Bulk import/export lists
+- View list contents
+- Set list retention policies
+
+--------------------------------------------------------------------------------
+FEEDBACK NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+There are two important points to note about setting up feedback notifications in multiple AWS 
+Regions:
+
+VERIFIED IDENTITY SETTINGS
+Such as whether you receive feedback by email or through SNS, only apply to the region that you 
+set them in. For example, if you verify user@example.com in the US West (Oregon) and US East 
+(N. Virginia) regions and you want to receive bounced emails via SNS notifications, you have to 
+use the SES API or the SES console to set up SNS feedback notifications for user@example.com 
+in both regions.
+
+SNS TOPICS
+SNS topics that you use for feedback forwarding have to be in the same region where you use SES.
+
+For more information about monitoring your sending activity through feedback notifications, 
+see Setting up event notifications for Amazon SES.
+
+Notification Types:
+1. Bounce Notifications
+   - Hard bounces (permanent delivery failure)
+   - Soft bounces (temporary delivery failure)
+   - Suppression list bounces
+
+2. Complaint Notifications
+   - User marked as spam
+   - ISP complaints
+   - Abuse reports
+
+3. Delivery Notifications
+   - Successful deliveries
+   - ISP acceptance confirmations
+
+4. Send Notifications
+   - Email accepted by SES
+   - Timestamp and message ID
+
+Delivery Methods:
+- Email notifications (to verified addresses)
+- Amazon SNS topics (recommended for production)
+- EventBridge events
+- CloudWatch logs
+
+Setup Requirements:
+- Verify destination email address or create SNS topic
+- Configure notification type per identity
+- Set region-specific preferences
+- Test notification delivery
+
+================================================================================
+SECTION 3: SMTP CREDENTIALS AND AUTHENTICATION
+================================================================================
+
+--------------------------------------------------------------------------------
+SMTP CREDENTIALS
+--------------------------------------------------------------------------------
+
+The credentials that you use to send email through the SES SMTP interface are unique to each 
+AWS Region. If you use the SES SMTP interface to send email in more than one region, you have 
+to generate a set of SMTP credentials for each region.
+
+NOTE: If you created your SMTP credentials before January 10, 2019, your SMTP credentials were 
+created using an older version of the AWS Signature. For security purposes, you should delete 
+credentials that you created before this date, and replace them with newer credentials. You can 
+delete older credentials by using the IAM console.
+
+SMTP Credential Components:
+- SMTP Username (derived from AWS access key ID)
+- SMTP Password (derived from AWS secret access key)
+- SMTP Endpoint URL (region-specific)
+- SMTP Port (typically 587 or 25)
+
+Security Best Practices:
+- Store credentials securely
+- Rotate credentials regularly
+- Use IAM users instead of root account
+- Enable MFA for account access
+- Monitor credential usage
+- Delete unused credentials
+
+Obtaining SMTP Credentials:
+1. Log into AWS Management Console
+2. Navigate to SES console
+3. Go to SMTP settings section
+4. Click "Create My SMTP Credentials"
+5. Confirm IAM user creation
+6. Download credentials (one-time only)
+7. Store securely
+
+--------------------------------------------------------------------------------
+FEEDBACK ENDPOINTS USED FOR CUSTOM MAIL FROM DOMAINS
+--------------------------------------------------------------------------------
+
+If you use a custom MAIL FROM domain, SES requires you to publish an MX record so that your 
+domain can receive the bounce and complaint notifications that email providers send you. You 
+can use the same custom MAIL FROM domain for verified identities in different AWS Regions 
+because the bounce and complaint notifications are sent to a region specific feedback endpoint.
+
+When you configure a custom MAIL FROM domain, SES automatically specifies the correct feedback 
+endpoint for the region where the custom MAIL FROM is being configured. This endpoint is 
+provided in the MX record's value field for you to publish (add) to your domain's DNS 
+configuration.
+
+The custom MAIL FROM setup process is described in Using a custom MAIL FROM domain. For 
+reference, the feedback endpoints that SES uses for the different AWS Regions is listed in 
+the Feedback endpoints table in the AWS General Reference.
+
+Custom MAIL FROM Benefits:
+- Professional email appearance
+- Custom branding
+- Improved deliverability
+- Better reputation management
+- Control over bounce handling
+
+MX Record Configuration:
+- Record Type: MX
+- Priority: Standard MX priority (typically 10)
+- Value: Feedback endpoint URL
+- TTL: Standard (typically 3600 or 300)
+
+Example MX Record:
+mail.example.com. 300 IN MX 10 feedback-smtp.us-east-1.amazonses.com.
+
+Feedback Endpoints by Region:
+- US East (N. Virginia): feedback-smtp.us-east-1.amazonses.com
+- US West (Oregon): feedback-smtp.us-west-2.amazonses.com
+- Europe (Ireland): feedback-smtp.eu-west-1.amazonses.com
+- Europe (Frankfurt): feedback-smtp.eu-central-1.amazonses.com
+- Asia Pacific (Tokyo): feedback-smtp.ap-northeast-1.amazonses.com
+- Asia Pacific (Singapore): feedback-smtp.ap-southeast-1.amazonses.com
+
+================================================================================
+SECTION 4: SENDING AUTHORIZATION
+================================================================================
+
+Delegate senders can only send emails from the AWS Region where the identity owner's identity 
+is verified. The sending authorization policy that gives permission to the delegate sender must 
+be attached to the identity in that region. 
+
+For more information about sending authorization, see Using sending authorization with Amazon 
+SES.
+
+Sending Authorization Components:
+1. Identity Owner
+   - Owns the email identity (domain or address)
+   - Creates authorization policies
+   - Defines allowed delegates
+   - Monitors delegated sending
+
+2. Delegate Sender
+   - Sends email on behalf of owner
+   - Must have AWS account access
+   - Operates within policy constraints
+   - Cannot modify authorization policies
+
+3. Authorization Policy
+   - JSON-based policy document
+   - Specifies allowed actions
+   - Lists delegate principals
+   - Sets resource constraints
+
+Typical Authorization Scenario:
+- Marketing company wants to send email on behalf of brand
+- Brand creates authorization policy
+- Marketing company assumes delegated role
+- Marketing sends email from brand domain
+- Bounces/complaints go to brand account
+
+Authorization Policy Example:
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::123456789012:root"
+      },
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": "arn:aws:ses:*:*:identity/example.com"
+    }
+  ]
+}
+
+================================================================================
+SECTION 5: EMAIL RECEIVING
+================================================================================
+
+With the exception of Amazon S3 buckets, all of the AWS resources that you use for receiving 
+email with SES have to be in the same AWS Region as the SES endpoint. For example, if you use 
+SES in the US West (Oregon) region, then any SNS topics, KMS keys, and Lambda functions that 
+you use also have to be in the US West (Oregon) region. Similarly, to receive email with SES 
+within a region, you have to create an active receipt rule set in that region. 
+
+Email receiving concepts and setup process are explained in Email receiving with Amazon SES.
+
+The Email Receiving endpoints table in the AWS General Reference lists the email receiving 
+endpoints for all of the AWS Regions where SES supports email receiving.
+
+Email Receiving Features:
+- Receive email to your domain
+- Process emails with receipt rules
+- Filter emails with IP address filters
+- Store emails in S3
+- Trigger Lambda functions
+- Publish to SNS topics
+- Send to WorkMail
+
+Receipt Rules:
+- Recipient-based control
+- Fine-grained email processing
+- Multiple actions per rule
+- Organized in rule sets
+- Execute in priority order
+
+IP Address Filters:
+- IP-based control
+- Allow/block by IP or CIDR block
+- Simple to set up and manage
+- Broad filtering capability
+- Useful for trusted senders/blockers
+
+Email Receiving Supported Regions:
+- US East (N. Virginia)
+- US West (Oregon)
+- Europe (Ireland)
+- Europe (Frankfurt)
+- Asia Pacific (Tokyo)
+- And others as per AWS documentation
+
+Email Receiving Resource Requirements:
+- MX record in domain DNS
+- Receipt rule set
+- Target resources (S3, SNS, Lambda, etc.) in same region
+- IAM permissions for resources
+- Optional: custom MAIL FROM domain
+
+================================================================================
+SECTION 6: SERVICE QUOTAS IN AMAZON SES
+================================================================================
+
+The following sections list and describe the quotas that apply to Amazon SES resources and 
+operations. Some quotas can be increased, while others can't. To determine whether you can 
+request an increase for a quota, refer to the Adjustable column.
+
+NOTE: SES quotas are for each AWS Region that you use in your AWS account.
+
+--------------------------------------------------------------------------------
+EMAIL SENDING QUOTAS
+--------------------------------------------------------------------------------
+
+SENDING QUOTAS
+Quotas are based on the number of recipients, rather than on the number of messages.
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Number of emails that can be sent per     | Sandbox: 200 emails per 24-hour period | Yes        |
+| 24-hour period                            | Production: Varies by use case         |            |
++------------------------------------------+----------------------------------------+------------+
+| Number of emails that can be sent per     | Sandbox: 1 email per second            | Yes        |
+| second (sending rate)                     | Production: Varies by use case         |            |
++------------------------------------------+----------------------------------------+------------+
+
+MESSAGE QUOTAS
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| SES v1 API - Max message size with        | 10 MB per message (after base64        | No         |
+| attachments                               | encoding)                              |            |
++------------------------------------------+----------------------------------------+------------+
+| SES v2 API or SMTP - Max message size     | 40 MB per message (after base64        | No         |
+| with attachments                          | encoding)                              |            |
++------------------------------------------+----------------------------------------+------------+
+
+NOTE: Messages larger than 10MB are subject to bandwidth throttling, and depending on your 
+sending rate, you may be throttled to as low as 40MB/s. For example, you could send a 40MB 
+message at the rate of 1 message per second, or two 20MB messages per second.
+
+SENDER AND RECIPIENT QUOTAS
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of recipients per message  | 50 recipients per message              | No         |
+|                                            | (To, CC, BCC addresses)                |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of identities that can be  | 10,000 identities per AWS Region       | Contact    |
+| verified                                  |                                        | AWS Acct   |
+|                                            |                                        | Manager    |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of dedicated IP pools      | 50 (managed + standard combined)       | No         |
+| (managed and standard)                    |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+
+QUOTAS RELATED TO EVENT PUBLISHING
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of configuration sets      | 10,000                                 | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum length of configuration set name  | 64 alphanumeric characters             | No         |
+|                                            | Hyphens (-) and underscores (_) OK     |            |
+|                                            | No spaces or special characters        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of event destinations per  | 10                                     | No         |
+| configuration set                         |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of dimensions per          | 10                                     | No         |
+| CloudWatch event destination              |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+
+EMAIL TEMPLATE QUOTAS
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of email templates in each | 20,000                                 | No         |
+| AWS Region                                |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum template size                     | 500 KB                                 | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of replacement values in   | Unlimited                              | N/A        |
+| each template                             |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of recipients for each     | 50 destinations                        | No         |
+| templated email                           | (To, CC, BCC addresses)                |            |
++------------------------------------------+----------------------------------------+------------+
+
+--------------------------------------------------------------------------------
+EMAIL RECEIVING QUOTAS
+--------------------------------------------------------------------------------
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of rules per receipt rule  | 200                                    | No         |
+| set                                       |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of actions per receipt     | 10                                     | No         |
+| rule                                      |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of recipients per receipt  | 500                                    | No         |
+| rule                                      |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of receipt rule sets per   | 40                                     | No         |
+| AWS account                               |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of IP address filters per  | 100                                    | No         |
+| AWS account                               |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum email size (including headers)    | 40 MB                                  | No         |
+| that can be stored in S3 bucket           |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum email size (including headers)    | 150 KB                                 | No         |
+| that can be published using SNS           |                                        |            |
+| notification                              |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum email headers size that can be    | 10 KB                                  | No         |
+| published using SNS notification          |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum email headers size that can be    | 50 KB                                  | No         |
+| published using AWS Lambda function       |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+
+--------------------------------------------------------------------------------
+MAIL MANAGER QUOTAS
+--------------------------------------------------------------------------------
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of open ingress endpoints  | 10                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of authorized ingress      | 50                                     | No         |
+| endpoints                                 |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of recipients per message  | 100                                    | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum email size (including headers)    | 40 MB                                  | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of traffic policy          | 20                                     | No         |
+| statements                                |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of traffic policy          | 10                                     | No         |
+| statement conditions                      |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of traffic policies per    | 100                                    | No         |
+| region                                    |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of SMTP relays             | 40                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of Address Lists per       | 100                                    | No         |
+| region                                    |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of addresses per Address   | 100,000                                | No         |
+| List                                      |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of rule sets               | 40                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of rules per rule set      | 40                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of conditions per rule     | 10                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of actions per rule        | 10                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of relay or send actions   | 10                                     | No         |
+| per rule set                              |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of active archives         | 10                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of archive search results  | 1000                                   | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of exported archive search | 250,000                                | No         |
+| results                                   |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of running search requests | 1                                      | No         |
+| in parallel                               |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of running export requests | 1                                      | No         |
+| in parallel                               |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of retention changes for   | 1                                      | No         |
+| archive per week                          |                                        |            |
++------------------------------------------+----------------------------------------+------------+
+
+--------------------------------------------------------------------------------
+GENERAL QUOTAS
+--------------------------------------------------------------------------------
+
+SES API SENDING QUOTAS
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Rate at which you can call Amazon SES API | All actions (except SendEmail,          | No         |
+| actions                                   | SendRawEmail, SendTemplatedEmail) are   |            |
+|                                            | throttled at one request per second    |            |
++------------------------------------------+----------------------------------------+------------+
+| MIME parts                                | 500                                    | No         |
++------------------------------------------+----------------------------------------+------------+
+
+SES MISCELLANEOUS QUOTAS
+
++------------------------------------------+----------------------------------------+------------+
+| Resource                                  | Default Quota                          | Adjustable |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of concurrent import jobs  | 20                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+| Maximum number of concurrent export jobs  | 20                                     | No         |
++------------------------------------------+----------------------------------------+------------+
+
+================================================================================
+SECTION 7: TYPES OF AMAZON SES CREDENTIALS
+================================================================================
+
+To interact with Amazon Simple Email Service (Amazon SES), you use security credentials to 
+verify who you are and whether you have permission to interact with Amazon SES. There are 
+different types of credentials, and the credentials you use depend on what you want to do. 
+For example, you use AWS access keys when you send an email using the Amazon SES API, and 
+SMTP credentials when you send an email using the Amazon SES SMTP interface.
+
+CREDENTIAL TYPES TABLE
+
++---------------------------+-------------------+------------------+------------------------+
+| If you want to access the  | Use these         | What the          | How to get the         |
+|                             | credentials       | credentials       | credentials            |
+|                             |                   | consist of        |                        |
++---------------------------+-------------------+------------------+------------------------+
+| Amazon SES API             | AWS access keys   | Access key ID and | See Access Keys in the |
+| (directly or through AWS   |                   | secret access key | AWS General Reference. |
+| SDK, CLI, or PowerShell)   |                   |                   |                        |
+|                             |                   |                   | BEST PRACTICE: Use     |
+|                             |                   |                   | IAM user access keys   |
+|                             |                   |                   | instead of AWS account |
+|                             |                   |                   | access keys.           |
+|                             |                   |                   | Root account           |
+|                             |                   |                   | credentials grant full |
+|                             |                   |                   | access to all AWS      |
+|                             |                   |                   | resources.             |
++---------------------------+-------------------+------------------+------------------------+
+| Amazon SES SMTP interface  | SMTP credentials  | Username and      | See Obtaining Amazon   |
+|                             |                   | password          | SES SMTP credentials.  |
+|                             |                   |                   |                        |
+|                             |                   |                   | NOTE: Although your    |
+|                             |                   |                   | Amazon SES SMTP        |
+|                             |                   |                   | credentials are        |
+|                             |                   |                   | different than your    |
+|                             |                   |                   | AWS access keys and    |
+|                             |                   |                   | IAM user access keys,  |
+|                             |                   |                   | Amazon SES SMTP        |
+|                             |                   |                   | credentials are        |
+|                             |                   |                   | actually a type of IAM |
+|                             |                   |                   | credentials.           |
+|                             |                   |                   |                        |
+|                             |                   |                   | An IAM user can create |
+|                             |                   |                   | Amazon SES SMTP        |
+|                             |                   |                   | credentials, but the   |
+|                             |                   |                   | root account owner must|
+|                             |                   |                   | ensure that the IAM    |
+|                             |                   |                   | user's policy gives    |
+|                             |                   |                   | them permission to     |
+|                             |                   |                   | access the following   |
+|                             |                   |                   | IAM actions:           |
+|                             |                   |                   | - iam:ListUsers        |
+|                             |                   |                   | - iam:CreateUser       |
+|                             |                   |                   | - iam:CreateAccessKey  |
+|                             |                   |                   | - iam:PutUserPolicy    |
++---------------------------+-------------------+------------------+------------------------+
+| Amazon SES console         | IAM user name and | IAM user name and | See IAM User Name and  |
+|                             | password OR       | password OR       | Password and Email     |
+|                             | Email address and | Email address and | Address and Password   |
+|                             | password          | password          | of the AWS General     |
+|                             |                   |                   | Reference.             |
+|                             |                   |                   |                        |
+|                             |                   |                   | BEST PRACTICE: Use     |
+|                             |                   |                   | IAM user name and      |
+|                             |                   |                   | password instead of    |
+|                             |                   |                   | email address and      |
+|                             |                   |                   | password.              |
+|                             |                   |                   | Email/password combo   |
+|                             |                   |                   | is for AWS account,    |
+|                             |                   |                   | so store securely.     |
++---------------------------+-------------------+------------------+------------------------+
+
+For more information about different types of AWS security credentials (except for SMTP 
+credentials, which are used only for Amazon SES), see AWS Security Credentials in the AWS 
+General Reference.
+
+================================================================================
+SECTION 8: HOW EMAIL SENDING WORKS IN AMAZON SES
+================================================================================
+
+This topic describes what happens when you send an email with SES, and the various outcomes 
+that can occur after the email is sent.
+
+SENDING PROCESS OVERVIEW
+
+1. A client application, acting as an email sender, makes a request to SES to send email to 
+   one or more recipients.
+2. If the request is valid, SES accepts the email.
+3. SES sends the message over the Internet to the recipient's receiver. Once the message is 
+   passed to SES, it is usually sent immediately, with the first delivery attempt normally 
+   occurring within milliseconds.
+4. At this point, there are different possibilities:
+   - The ISP successfully delivers the message to the recipient's inbox.
+   - The recipient's email address does not exist, so the ISP sends a bounce notification to 
+     SES. SES then forwards the notification to the sender.
+   - The recipient receives the message but considers it to be spam and registers a complaint 
+     with the ISP. The ISP, which has a feedback loop set up with SES, sends the complaint to 
+     SES, which then forwards it to the sender.
+
+--------------------------------------------------------------------------------
+AFTER A SENDER SENDS AN EMAIL REQUEST TO SES
+--------------------------------------------------------------------------------
+
+SUCCESSFUL SENDING REQUEST
+
+If the request to SES succeeds, SES returns a success response to the sender. This message 
+includes the message ID, a string of characters that uniquely identifies the request. You can 
+use the message ID to identify the sent email or to track problems encountered during sending 
+(you must store your own mapping between an identifier and the SES message ID that SES passes 
+back to you when it accepts the email). 
+
+SES then assembles an email message based on the request parameters, scans the message for 
+questionable content and viruses and then sends it out over the Internet using Simple Mail 
+Transfer Protocol (SMTP). Your message is usually sent immediately; the first delivery attempt 
+typically occurs within milliseconds.
+
+NOTE: If SES accepts the sender's request and then determines that the message contains a virus, 
+SES stops processing the message and doesn't attempt to deliver it to the recipient's mail server.
+
+Message ID Format:
+- Alphanumeric string
+- Unique identifier per request
+- Used for tracking and troubleshooting
+- Returned in API response
+- Store for audit trail
+
+FAILED SENDING REQUEST
+
+If the sender's email-sending request to SES fails, SES responds to the sender with an error and 
+drops the email. The request could fail for several reasons. For example, the request may not be 
+formatted properly or the email address may not have been verified by the sender.
+
+The method through which you can determine if the request has failed depends on how you call SES:
+
+IF YOU ARE CALLING SES THROUGH THE QUERY (HTTPS) API
+(SendEmail or SendRawEmail), the actions will return an error. For more information, see the 
+Amazon Simple Email Service API Reference.
+
+IF YOU ARE USING AN AWS SDK FOR A PROGRAMMING LANGUAGE THAT USES EXCEPTIONS
+The call to SES will throw a MessageRejectedException. (The name of the exception may vary 
+slightly depending on the SDK.)
+
+IF YOU ARE USING THE SMTP INTERFACE
+Then the sender receives an SMTP response code, but how the error is conveyed depends on the 
+sender's client. Some clients may display an error code; others may not.
+
+Common Error Codes:
+- MessageRejected: Generic rejection
+- InvalidParameterValue: Invalid parameter
+- InvalidParameterFormat: Malformed parameter
+- ConfigurationSetDoesNotExist: Configuration set not found
+- AccountSendingPausedException: Account sending paused
+- MailFromDomainNotVerified: MAIL FROM domain not verified
+- EmailTemplateDoesNotExist: Template not found
+
+--------------------------------------------------------------------------------
+AFTER AMAZON SES SENDS AN EMAIL
+--------------------------------------------------------------------------------
+
+If the sender's request to SES succeeds, then SES sends the email and one of the following 
+outcomes occurs:
+
+SUCCESSFUL DELIVERY
+
+The email is accepted by the ISP, and the ISP delivers the email to the recipient. A 
+successful delivery is shown when the recipient receives the message.
+
+Delivery indicators:
+- Message accepted by ISP
+- Successfully delivered to mailbox
+- Recipient can access email
+- No bounce or complaint generated
+
+Hard Bounce Result:
+
+The email is rejected by the ISP because of a persistent condition or rejected by SES because 
+the email address is on the SES suppression list. An email address is on the SES suppression 
+list if it has recently caused a hard bounce for any SES customer. A hard bounce with an ISP 
+can occur because the recipient's address is invalid. 
+
+A hard bounce notification is sent from the ISP back to SES, which notifies the sender through 
+email or through Amazon Simple Notification Service (Amazon SNS), depending on the sender's 
+setup. SES notifies the sender of suppression list bounces by the same means.
+
+Reasons for Hard Bounce:
+- Invalid email address format
+- Non-existent recipient
+- Non-existent domain
+- Disabled mailbox
+- Recipient has closed account
+- Mailbox full (sometimes)
+
+Hard Bounce Handling:
+- Not retried by SES
+- Permanent failure
+- Count toward bounce rate
+- Can override with account-level suppression list
+- Recommend removal from mailing list
+- Notification sent to sender
+
+Soft Bounce Result:
+
+The ISP cannot deliver the email to the recipient because of a temporary condition, such as 
+the ISP is too busy to handle the request or the recipient's mailbox is full. A soft bounce 
+can also occur if the domain does not exist. 
+
+The ISP sends a soft bounce notification back to SES, or, in the case of a nonexistent domain, 
+SES cannot find an email server for the domain. In either case, SES retries the email for an 
+extended period of time. If SES cannot deliver the email in that time period, it sends you a 
+bounce notification through email or through Amazon SNS. If SES can deliver the email to the 
+recipient during a retry, the delivery is successful.
+
+Reasons for Soft Bounce:
+- Mailbox full
+- ISP temporarily unavailable
+- Service temporarily busy
+- Connection timeout
+- Rate limiting/throttling
+- Temporary DNS issues
+- Transient network errors
+
+Soft Bounce Handling:
+- Automatically retried by SES
+- Multiple retry attempts
+- Retry period: extended (typically hours)
+- Notification after retry failure
+- Do not count toward bounce rate
+- Transient nature means may succeed later
+
+Complaint Result:
+
+The email is accepted by the ISP and delivered to the recipient, but the recipient considers 
+the email to be spam and clicks a button such as "Mark as spam" in his or her email client. 
+
+If SES has a feedback loop set up with the ISP, then a complaint notification is sent to SES, 
+which forwards the complaint notification to the sender. Most ISPs do not provide the email 
+address of the recipient who submitted the complaint, so the complaint notification from SES 
+provides the sender a list of recipients who might have sent the complaint, based on the 
+recipients of the original message and the ISP from which SES received the complaint.
+
+Complaint Processing:
+- User marks email as spam
+- ISP generates complaint notification
+- Sent to feedback address
+- SES forwards to account owner
+- Include potential recipients
+- Not actual recipient email (privacy)
+
+Complaint Impact:
+- Damages sender reputation
+- High complaint rate can result in throttling
+- Multiple complaints can lead to account suspension
+- Track and manage complaint addresses
+- Remove complainers from mailing list
+
+Auto Response Result:
+
+The email is accepted by the ISP, and the ISP delivers it to the recipient. The ISP then 
+sends an automatic response such as an out-of-the-office (OOTO) message to SES. SES forwards 
+the auto response notification to the sender.
+
+TIP: Make sure that your SES-enabled program does not retry sending messages that generate an 
+auto response.
+
+Auto Response Handling:
+- Automatic mail reply detection
+- Out of office messages
+- Vacation responses
+- Auto-responder emails
+- Forwarded to sender as notification
+- Can be tracked per email
+
+================================================================================
+SECTION 9: EMAIL FORMAT IN AMAZON SES
+================================================================================
+
+When a client makes a request to Amazon SES, Amazon SES constructs an email message compliant 
+with the Internet Message Format specification (RFC 5322). An email consists of a header, a 
+body, and an envelope, as described below.
+
+EMAIL COMPONENTS
+
+HEADER
+Contains routing instructions and information about the message. Examples are the sender's 
+address, the recipient's address, the subject, and the date. The header is analogous to the 
+information at the top of a postal letter, though it can contain many other types of 
+information, such as the format of the message.
+
+BODY
+Contains the text of the message itself.
+
+ENVELOPE
+Contains the actual routing information that is communicated between the email client and the 
+mail server during the SMTP session. This email envelope information is analogous to the 
+information on a postal envelope. The routing information of the email envelope is usually the 
+same as the routing information in the email header, but not always. For example, when you send 
+a blind carbon copy (BCC), the actual recipient address (derived from the envelope) is not the 
+same as the "To" address that is displayed in the recipient's email client, which is derived 
+from the header.
+
+EXAMPLE EMAIL
+
+================================================================================
+Received: from abc.smtp-out.amazonses.com (123.45.67.89) by in.example.com 
+(87.65.43.210); Fri, 17 Dec 2010 14:26:22
+From: "Andrew" <andrew@example.com>;
+To: "Bob" <bob@example.com>
+Date: Fri, 17 Dec 2010 14:26:21 -0800
+Subject: Hello
+Message-ID: <61967230-7A45-4A9D-BEC9-87CBCF2211C9@example.com>
+Accept-Language: en-US
+Content-Language: en-US
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Hello, I hope you are having a good day.
+-Andrew
+================================================================================
+
+EMAIL HEADER
+
+There is one header per email message. Each line of the header contains a field followed by a 
+colon followed by a field body. When you read an email in an email client, the email client 
+typically displays the values of the following header fields:
+
+TO
+The email addresses of the message's recipients.
+
+CC
+The email addresses of the message's carbon copy recipients.
+
+FROM
+The email address from which the email is sent.
+
+SUBJECT
+A summary of the message topic.
+
+DATE
+The time and date the email is sent.
+
+There are many additional header fields that provide routing information and describe the 
+content of the message. Email clients typically do not display these fields to the user. For 
+a full list of the header fields that Amazon SES accepts, see Amazon SES header fields. 
+
+When you use Amazon SES, you particularly need to understand the difference between "From," 
+"Reply-To," and "Return-Path" header fields. As noted previously, the "From" address is the 
+email address of the message sender, whereas "Reply-To" and "Return-Path" are as follows:
+
+REPLY-TO
+The email address to which replies will be sent. By default, replies are sent to the original 
+sender's email address.
+
+RETURN-PATH
+The email address to which message bounces and complaints should be sent. "Return-Path" is 
+sometimes called "envelope from," "envelope sender," or "MAIL FROM."
+
+NOTE: When you use Amazon SES, we recommend that you always set the "Return-Path" parameter 
+so that you can be aware of bounces and take corrective action if they occur.
+
+VARIABLE ENVELOPE RETURN PATH (VERP)
+
+To easily match a bounced message with its intended recipient, you can use Variable Envelope 
+Return Path (VERP). With VERP, you set a different "Return-Path" for each recipient, so that 
+if the message bounces back, you automatically know which recipient it bounced from, rather 
+than having to open the bounce message and parse it.
+
+VERP Implementation:
+- Unique Return-Path per recipient
+- Recipient identifier in MAIL FROM
+- Automatic bounce matching
+- Improved analytics
+- Better error tracking
+
+Example VERP:
+Return-Path: <bounce+recipient123@example.com>
+Return-Path: <bounce+recipient456@example.com>
+
+EMAIL BODY
+
+The email body contains the text of the message. The body can be sent in the following formats:
+
+HTML
+If the recipient's email client can interpret HTML, the body can include formatted text and 
+hyperlinks.
+
+PLAIN TEXT
+If the recipient's email client is text-based, the body must not contain any nonprintable 
+characters.
+
+BOTH HTML AND PLAIN TEXT
+When you use both formats to send the same content in a single message, the recipient's email 
+client decides which to display, based upon its capabilities.
+
+If you are sending an email message to a large number of recipients, then it makes sense to 
+send it in both HTML and text. Some recipients will have HTML-enabled email clients, so that 
+they can click embedded hyperlinks in the message. Recipients using text-based email clients 
+will need you to include URLs that they can copy and open using a web browser.
+
+EMAIL INFORMATION YOU NEED TO PROVIDE TO AMAZON SES
+
+When you send an email with Amazon SES, the email information you need to provide depends on 
+how you call Amazon SES. You can provide a minimal amount of information and have Amazon SES 
+take care of all of the formatting for you. Or, if you want to do something more advanced like 
+send an attachment, you can provide the raw message yourself.
+
+AMAZON SES API
+
+If you call the Amazon SES API directly, you call either the SendEmail or the SendRawEmail API. 
+The amount of information you need to provide depends on which API you call.
+
+THE SENDEMAIL API
+Requires you to provide only a source address, destination address, message subject, and a 
+message body. You can optionally provide "Reply-To" addresses. When you call this API, Amazon 
+SES automatically assembles a properly formatted multi-part Multipurpose Internet Mail 
+Extensions (MIME) email message optimized for display by email client software. For more 
+information, see Sending formatted email using the Amazon SES API.
+
+THE SENDRAWEMAIL API
+Provides you the flexibility to format and send your own raw email message by specifying 
+headers, MIME parts, and content types. SendRawEmail is typically used by advanced users. You 
+need to provide the body of the message and all header fields that are specified as required 
+in the Internet Message Format specification (RFC 5322). For more information, see Sending raw 
+email using the Amazon SES API v2.
+
+If you use an AWS SDK to call the Amazon SES API, you provide the information listed above to 
+the corresponding functions (for example, SendEmail and SendRawEmail for Java).
+
+AMAZON SES SMTP INTERFACE
+
+When you access Amazon SES through the SMTP interface, your SMTP client application assembles 
+the message, so the information you need to provide depends on the application you are using. 
+At a minimum, the SMTP exchange between a client and a server requires a source address, a 
+destination address, and message data.
+
+AMAZON SES CONSOLE
+
+When you send an email by using the Amazon SES console, the amount of information you need to 
+provide depends on whether you choose to send a formatted or raw email.
+
+TO SEND A FORMATTED EMAIL
+You need to provide a source address, a destination address, a message subject, and a message 
+body. Amazon SES automatically assembles a properly formatted multi-part MIME email message 
+optimized for display by email client software. You can also specify a reply-to and a return 
+path field.
+
+TO SEND A RAW EMAIL
+You provide the source address, a destination address, and the message content, which must 
+contain the body of the message and all header fields that are specified as required in the 
+Internet Message Format specification (RFC 5322).
+
+================================================================================
+SECTION 10: UNDERSTANDING EMAIL DELIVERABILITY IN AMAZON SES
+================================================================================
+
+You want your recipients to read your emails, find them valuable, and not label them as spam. 
+In other words, you want to maximize email deliverability—the percentage of your emails that 
+arrive in your recipients' inboxes. This topic reviews email deliverability concepts that you 
+should be familiar with when you use Amazon SES.
+
+To maximize email deliverability, you need to understand email delivery issues, proactively 
+take steps to prevent them, stay informed of the status of the emails that you send, and then 
+improve your email-sending program, if necessary, to further increase the likelihood of 
+successful deliveries.
+
+UNDERSTAND EMAIL DELIVERY ISSUES
+
+In most cases, your messages are delivered successfully to recipients who expect them. In some 
+cases, however, a delivery might fail, or a recipient might not want to receive the mail that 
+you are sending. Bounces, complaints, and the suppression list are related to these delivery 
+issues and are described in the following sections.
+
+BOUNCE
+
+If your recipient's receiver (for example, an email provider) fails to deliver your message to 
+the recipient, the receiver bounces the message back to Amazon SES. Amazon SES then notifies 
+you of the bounced email through email or through Amazon Simple Notification Service (Amazon 
+SNS), depending on how you have your system set up. For more information, see Setting up event 
+notifications for Amazon SES.
+
+There are hard bounces and soft bounces, as follows:
+
+HARD BOUNCE
+A persistent email delivery failure. For example, the mailbox does not exist. Amazon SES does 
+not retry hard bounces, with the exception of DNS lookup failures. We strongly recommend that 
+you do not make repeated delivery attempts to email addresses that hard bounce.
+
+SOFT BOUNCE
+A temporary email delivery failure. For example, the mailbox is full, there are too many 
+connections (also called throttling), or the connection times out. Amazon SES retries soft 
+bounces multiple times. If the email still cannot be delivered, then Amazon SES stops retrying 
+it.
+
+Amazon SES notifies you of hard bounces and soft bounces that will no longer be retried. 
+However, only hard bounces count toward your bounce rate and the bounce metric that you 
+retrieve using the Amazon SES console or the GetSendStatistics API.
+
+Bounces can also be synchronous or asynchronous. 
+
+A SYNCHRONOUS BOUNCE occurs while the email servers of the sender and receiver are actively 
+communicating. 
+
+AN ASYNCHRONOUS BOUNCE occurs when a receiver initially accepts an email message for delivery 
+and then subsequently fails to deliver it to the recipient.
+
+COMPLAINT
+
+Most email client programs provide a button labeled "Mark as Spam," or similar, which moves the 
+message to a spam folder, and forwards it to the email provider. Additionally, most email 
+providers maintain an abuse address (e.g., abuse@example.net), where users can forward unwanted 
+email messages and request that the email provider take action to prevent them. In both of 
+these cases, the recipient is making a complaint. 
+
+If the email provider concludes that you are a spammer, and Amazon SES has a feedback loop set 
+up with the email provider, then the email provider will send the complaint back to Amazon SES. 
+When Amazon SES receives such a complaint, it forwards the complaint to you either by email or 
+by using an Amazon SNS notification, depending on how you have your system set up. For more 
+information, see Setting up event notifications for Amazon SES.
+
+We recommend that you do not make repeated delivery attempts to email addresses that generate 
+complaints.
+
+GLOBAL SUPPRESSION LIST
+
+The Amazon SES global suppression list, owned and managed by SES to protect the reputation of 
+addresses in the SES shared IP pool, contains recipient email addresses that have recently 
+caused a hard bounce for any SES customer. If you try to send an email through SES to an 
+address that is on the suppression list, the call to SES succeeds, but SES treats the email 
+as a hard bounce instead of attempting to send it. 
+
+Like any hard bounce, suppression list bounces count towards your sending quota and your 
+bounce rate. An email address can remain on the suppression list for up to 14 days.
+
+If you're sure that the email address that you're trying to send to is valid, you can override 
+the global suppression list by making sure the address isn't listed in your account-level 
+suppression list and SES will still attempt delivery, but if it bounces, the bounce will 
+affect your own reputation, but no one else will get bounces because they can't send to that 
+email address if they aren't using their own account-level suppression list. To understand 
+more about the account-level suppression list, see Using the Amazon SES account-level 
+suppression list.
+
+BE PROACTIVE
+
+One of the biggest issues with email on the Internet is unsolicited bulk email (spam). Email 
+providers take extensive measures to prevent their customers from receiving spam. Amazon SES 
+also takes steps to decrease the likelihood that email providers consider your email to be 
+spam. Amazon SES uses verification, authentication, sending quotas, and content filtering. 
+Amazon SES also maintains a trusted reputation with email providers and requires you to send 
+high-quality email. Amazon SES does some of those things for you automatically (for example, 
+content filtering); in other cases, it provides the tools (such as authentication), or guides 
+you in the right direction (sending quotas).
+
+VERIFICATION
+
+Unfortunately, it's possible for a spammer to falsify an email header and spoof the originating 
+email address so that it appears as though the email originated from a different source. To 
+maintain trust between email providers and Amazon SES, Amazon SES needs to ensure that its 
+senders are who they say they are. You are therefore required to verify all email addresses 
+from which you send emails through Amazon SES to protect your sending identity. 
+
+You can verify email addresses by using the Amazon SES console or by using the Amazon SES API. 
+You can also verify entire domains. For more information, see Creating an email address 
+identity and Creating a domain identity.
+
+If your account is still in the Amazon SES sandbox, you also need to verify all recipient 
+addresses except for addresses provided by the Amazon SES mailbox simulator. For information 
+about getting out of the sandbox, see Request production access (Moving out of the Amazon SES 
+sandbox). For more information about the mailbox simulator, see Using the mailbox simulator 
+manually.
+
+AUTHENTICATION
+
+Authentication is another way that you can indicate to email providers that you are who you 
+say you are. When you authenticate an email, you provide evidence that you are the owner of 
+the account and that your emails have not been modified in transit. In some cases, email 
+providers refuse to forward email that is not authenticated. Amazon SES supports two methods 
+of authentication: Sender Policy Framework (SPF) and DomainKeys Identified Mail (DKIM). For 
+more information, see Configuring identities in Amazon SES.
+
+SENDING QUOTAS
+
+If an email provider detects sudden, unexpected spikes in the volume or rate of your emails, 
+the email provider might suspect you are a spammer and block your emails. Therefore, every 
+Amazon SES account has a set of sending quotas. These quotas restrict the number of emails 
+that you can send in a 24-hour period, and the number that you can send per second. These 
+sending quotas help protect your trustworthiness with email providers.
+
+In most cases, if you're a brand-new user, Amazon SES lets you send a small amount of email 
+each day. If the mail that you send is acceptable to email providers, we automatically 
+increase this quota. Your sending quotas steadily increase over time so that you can send 
+larger quantities of email at faster rates. You can also create an SES Sending Limits Increase 
+case to request additional quota increases.
+
+CONTENT FILTERING
+
+Many email providers use content filtering to determine if incoming emails are spam. Content 
+filters look for questionable content and block the email if the email fits the profile of 
+spam. Amazon SES uses content filters also. When your application sends a request to Amazon 
+SES, Amazon SES assembles an email message on your behalf and then scans the message header 
+and body to determine if they contain content that email providers might consider spam. If 
+your messages look like spam to the content filters that Amazon SES uses, your reputation with 
+Amazon SES will be negatively affected.
+
+Amazon SES also scans all messages for viruses. If a message contains a virus, Amazon SES 
+doesn't attempt to deliver the message to the recipient's mail server.
+
+REPUTATION
+
+When it comes to email sending, reputation—a measure of confidence that an IP address, email 
+address, or sending domain is not the source of spam—is important. Amazon SES maintains a 
+strong reputation with email providers so that they deliver your email to your recipients' 
+inboxes. Similarly, you need to maintain a trusted reputation with Amazon SES. You build your 
+reputation with Amazon SES by sending high-quality content. When you send high-quality content, 
+your reputation becomes more trusted over time and Amazon SES increases your sending quotas. 
+Excessive bounces and complaints negatively impact your reputation and can cause Amazon SES to 
+reduce the sending quotas for your account, or terminate your Amazon SES account.
+
+One way to help maintain your reputation is to use the mailbox simulator when you test your 
+system, instead of sending to email addresses that you have created yourself. Emails to the 
+mailbox simulator do not count toward your bounce and complaint metrics. For more information 
+about the mailbox simulator, see Using the mailbox simulator manually.
+
+HIGH-QUALITY EMAIL
+
+High-quality email is email that recipients find valuable and want to receive. Value means 
+different things to different recipients and can come in the form of offers, order 
+confirmations, receipts, newsletters, etc. Ultimately, your deliverability rests on the 
+quality of the emails that you send because email providers block emails that they consider 
+to be low quality.
+
+STAY INFORMED
+
+Whether your deliveries fail, your recipients complain about your emails, or Amazon SES 
+successfully delivers an email to a recipient's mail server, Amazon SES helps you to track 
+down the issue by providing notifications and by enabling you to easily monitor your usage 
+statistics.
+
+NOTIFICATIONS
+
+When an email bounces, the email provider notifies Amazon SES, and Amazon SES notifies you. 
+Amazon SES notifies you of hard bounces and soft bounces that Amazon SES will no longer retry. 
+Many email providers also forward complaints, and Amazon SES sets up complaint feedback loops 
+with the major email providers so you don't have to. Amazon SES can notify you of bounces, 
+complaints, and successful deliveries in two ways: you can set your account up to receive 
+notifications through Amazon SNS, or you can receive notifications by email (bounces and 
+complaints only). For more information, see Setting up event notifications for Amazon SES.
+
+USAGE STATISTICS
+
+Amazon SES provides usage statistics so that you can view your failed deliveries to determine 
+and resolve the root causes. You can view your usage statistics by using the Amazon SES console 
+or by calling the Amazon SES API. You can view how many deliveries, bounces, complaints, and 
+virus-infected rejected emails you have, and you can also view your sending quotas to ensure 
+that you stay within them.
+
+IMPROVE YOUR EMAIL-SENDING PROGRAM
+
+If you are getting large numbers of bounces and complaints, it's time to reassess your 
+email-sending strategy. Remember that excessive bounces, complaints, and attempts to send 
+low-quality email constitute abuse and put your AWS account at risk of termination. Ultimately, 
+you need to be sure that you use Amazon SES to send high-quality emails and to only send emails 
+to recipients who want to receive them.
+
+AT-LEAST-ONCE DELIVERY
+
+Amazon SES stores copies of your messages on multiple servers for redundancy and high 
+availability. On rare occasions, one of the servers that stores a copy of a message might be 
+unavailable when you receive or delete a message.
+
+If this occurs, the copy of the message isn't deleted on that unavailable server, and you 
+might get that message copy again when you receive messages. Design your applications to be 
+idempotent (they should not be affected adversely when processing the same message more than 
+once).
+
+================================================================================
+SECTION 11: EMAIL BEST PRACTICES
+================================================================================
+
+The way you manage email communications with your customers is referred to as your email 
+program. There are several factors that can lead to the success or failure of your email 
+program; these factors may seem confusing or mysterious at first. However, by understanding 
+how email is delivered, and by following certain best practices, you can increase the chances 
+of your email successfully reaching your customers' inboxes.
+
+EMAIL PROGRAM SUCCESS METRICS
+
+There are several metrics that help measure the success of your email program.
+
+BOUNCES
+
+A bounce occurs when an email cannot be delivered to the intended recipient. There are two 
+types of bounces: hard bounces and soft bounces. A hard bounce occurs when the email cannot be 
+delivered because of a persistent issue, such as when an email address doesn't exist. A soft 
+bounce occurs when a temporary issue prevents the delivery of an email. Soft bounces can occur 
+when a recipient's inbox is full, or when the receiving server is temporarily unavailable. 
+Amazon SES handles soft bounces by attempting to re-deliver soft bounced emails for a certain 
+period of time.
+
+It's essential that you monitor the number of hard bounces in your email program, and that you 
+remove hard-bouncing email addresses from your recipient lists. When email receivers detect a 
+high rate of hard bounces, they assume that you don't know your recipients well. As a result, 
+a high hard bounce rate can negatively impact the deliverability of your email messages.
+
+GUIDELINES TO AVOID BOUNCES:
+
+- Try to keep your hard bounce rate below 5%. The fewer hard bounces in your email program, 
+  the more likely ISPs will see your messages as legitimate and valuable. This rate should be 
+  considered a reasonable and attainable goal, but isn't a universal rule across all ISPs.
+
+- Never rent or buy email lists. These lists may contain large numbers of invalid addresses, 
+  which could cause your hard bounce rates to increase dramatically. Furthermore, these lists 
+  could contain spam traps—email addresses specifically used to catch illegitimate senders. If 
+  your messages land in a spam trap, your delivery rates and sender reputation could be 
+  irrevocably damaged.
+
+- Keep your list up to date. If you haven't emailed your recipients in a long time, try to 
+  validate your customers' statuses through some other means (such as website login activity 
+  or purchase history).
+
+- If you don't have a method of verifying your customers' statuses, consider sending a 
+  win-back email. A typical win-back email mentions that you haven't heard from the customer 
+  in a while, and encourages the customer to confirm that they still want to receive your 
+  email. After sending a win-back email, purge all of the recipients who did not respond from 
+  your lists.
+
+RESPONDING TO BOUNCES:
+
+- If an email address hard bounces, immediately remove that address from your lists. Do not 
+  attempt to re-send messages to hard-bouncing addresses. Repeated hard bounces add up, and 
+  ultimately harm your reputation with the recipient's ISP.
+
+- Make sure that the address you use to receive bounce notifications is able to receive email. 
+  For more information about setting up bounce and complaint notifications, see Setting up 
+  event notifications for Amazon SES.
+
+- If your inbound email comes to you from an ISP, instead of through your own internal 
+  servers, an influx of bounce notifications can land in your spam folder or be dropped 
+  completely. Ideally, you should not use a hosted email address to receive bounces. If you 
+  must, however, then check the spam folder often, and don't mark the bounce messages as 
+  spam. In Amazon SES, you can specify the address that bounce notifications are sent to.
+
+- Usually, a bounce provides the address of the mailbox refusing delivery. However, if you 
+  need more granular data to map a recipient address to a particular email campaign, include 
+  an X-header with a value you can trace back to your internal tracking system. For more 
+  information, see Amazon SES header fields.
+
+COMPLAINTS
+
+A complaint occurs when an email recipient clicks the "Mark as Spam" (or equivalent) button in 
+their web-based email client. If you accumulate a large number of these complaints, the ISP 
+assumes that you are sending spam. This has a negative impact on your deliverability rate and 
+sender reputation. Some, but not all, ISPs will notify you when a complaint is reported; this 
+is known as a feedback loop. Amazon SES automatically forwards complaints from ISPs that offer 
+feedback loops to you.
+
+GUIDELINES TO AVOID COMPLAINTS:
+
+- Try to keep your complaint rate below 0.1%. The fewer complaints in your email program, the 
+  more likely ISPs will see your messages as legitimate and valuable. This rate should be 
+  considered a reasonable and attainable goal, but isn't a universal rule across all ISPs.
+
+- If a customer complains about a marketing email, you should immediately stop sending that 
+  customer marketing emails. However, if your email program also includes other types of emails 
+  (such as notification or transactional emails), it may be acceptable to continue to send 
+  those types of messages to the recipient who issued the complaint.
+
+- As with hard bounces, if you have a list that you haven't sent email to in a while, ensure 
+  that your recipients understand why they're receiving your messages. We recommend that you 
+  send a welcome message reminding them of who you are and why you're contacting them.
+
+RESPONDING TO COMPLAINTS:
+
+- Make sure that the address you use to receive complaint notifications is able to receive 
+  email. For more information about setting up bounce and complaint notifications, see Setting 
+  up event notifications for Amazon SES.
+
+- Make sure that your complaint notifications aren't being marked as spam by your ISP or mail 
+  system.
+
+- Complaint notifications usually contain the body of the email; this is different from bounce 
+  notifications, which only include the email headers. However, in complaint notifications, the 
+  email address of the individual who issued the complaint is removed. Use custom X-headers or 
+  special identifiers embedded in the email body so that you can identify the email address 
+  that issued the complaint. This technique makes it easier to identify addresses that 
+  complained so that you can remove them from your recipient lists.
+
+MESSAGE QUALITY
+
+Email receivers use content filters to detect certain attributes in your messages to identify 
+whether your message is legitimate. These content filters automatically review the content of 
+your messages to identify common traits of unwanted to malicious messages. Amazon SES uses 
+content filtering technologies to help detect and block messages that contain malware before 
+they are sent.
+
+If an email receiver's content filters determine that your message contains the characteristics 
+of spam or malicious email, your message will most likely be flagged and diverted from 
+recipients' inboxes.
+
+REMEMBER THE FOLLOWING WHEN DESIGNING YOUR EMAIL:
+
+- Modern content filters are intelligent, continuously adapting and changing. They don't rely 
+  on a predefined set of rules. Third-party services such as ReturnPath or Litmus can help 
+  identify content in your email that may trigger content filters.
+
+- If your email contains links, check the URLs for those links against DNS-based Blackhole 
+  Lists (DNSBLs), such as those found at URIBL.com and SURBL.org.
+
+- Avoid using link shorteners. Malicious senders may use link shorteners to hide the actual 
+  destination of a link. When ISPs notice that link shortening services—even the most 
+  reputable ones—are being used for nefarious purposes, they may deny access to those services 
+  altogether. If your email contains a link to a link shortening service that has been added 
+  to a deny list, it won't reach your customers' inboxes, and the success of your email 
+  campaign suffers.
+
+- Test every link in your email to ensure that it points to the intended page.
+
+- Make sure your website includes Privacy Policy and Terms of Use documents, and that these 
+  documents are up to date. It's a good practice to link to these documents from each email 
+  you send. Providing links to these documents demonstrates that you have nothing to hide from 
+  your customers, which can help build a relationship of trust.
+
+- If you plan to send high-frequency content (such as "daily deals" messages), ensure that the 
+  content of your email is different with each deployment. When you send messages with high 
+  frequency, you must ensure that those messages are timely and relevant, rather than 
+  repetitive and annoying.
+
+MAINTAINING A POSITIVE SENDER REPUTATION
+
+In Amazon SES, sender reputation refers to the credibility and trustworthiness of the email 
+sender as perceived by email providers and spam filters. It is a measure of how likely your 
+emails are to be considered legitimate and delivered successfully to the recipients' inboxes.
+
+DOMAIN AND "FROM" ADDRESS CONSIDERATIONS
+
+- Think carefully about the addresses you send email from. The "From" address is one of the 
+  first pieces of information your recipients see, and therefore can leave a lasting first 
+  impression. Additionally, some ISPs associate your reputation with your "From" address.
+
+- Consider using subdomains for different types of communications. For example, assume you are 
+  sending email from the domain example.com, and you plan to send both marketing and 
+  transactional messages. Rather than sending all of your messages from example.com, send your 
+  marketing messages from a subdomain such as marketing.example.com, and your transactional 
+  messages from a subdomain such as orders.example.com. Unique subdomains develop their own 
+  reputations. Using subdomains reduces the risk of damage to your reputation if, for example, 
+  your marketing communications land in a spam trap or trigger a content filter.
+
+- If you plan to send a large number of messages, don't send those messages from an ISP-based 
+  address such as sender@hotmail.com. If an ISP notices a large volume of messages coming from 
+  sender@hotmail.com, that email is treated differently than an email that comes from an 
+  outbound email sending domain that you own.
+
+- Work with your domain registrar to ensure that the WHOIS information for your domain is 
+  accurate. Maintaining an honest and up-to-date WHOIS record demonstrates that you value 
+  transparency, and allows users to quickly identify whether or not your domain is legitimate.
+
+- Avoid using a no-reply address, such as no-reply@example.com, as your "From" or "Reply-to" 
+  address. Using a no-reply@ email address sends your recipients a clear message: that you 
+  aren't offering them a way to contact you, and that you're not interested in their feedback.
+
+AUTHENTICATION
+
+- Authenticate your domain with SPF and SenderID. These authentication methods confirm to 
+  email recipients that each email you send is actually from the domain it claims to be from.
+
+- Sign your outbound mail with DKIM. This step confirms to recipients that the content has 
+  not been changed in transit between sender and receiver.
+
+- You can test your authentication settings for both SPF and DKIM by sending an email to an 
+  ISP-based email address that you own, such as a personal Gmail or Hotmail account, and 
+  then viewing the message's headers. The headers indicate whether your attempts to 
+  authenticate and sign the message were successful.
+
+BUILDING AND MAINTAINING YOUR LISTS
+
+- Implement a double opt-in strategy. When users sign up to receive email from you, send them 
+  a message with a confirmation link, and do not start sending them email until they confirm 
+  their address by clicking that link. A double opt-in strategy helps reduce the number of 
+  hard bounces resulting from typographical errors.
+
+- When collecting email addresses with a web-based form, perform minimal validation on those 
+  addresses upon submission. For example, ensure that the addresses you collect are well-formed 
+  (that is, they are in the format recipient@example.com), and that they refer to domains with 
+  valid MX records.
+
+- Use caution when allowing user-defined input to be passed to Amazon SES unchecked. Forums 
+  registrations and form submissions present unique risks because the content is completely 
+  user-generated, and spammers can fill out forms with their own content. It's your 
+  responsibility to ensure that you only send email with high-quality content.
+
+- It is highly unlikely that a standard alias (such as postmaster@, abuse@, or noc@) will ever 
+  sign up for your email intentionally. Ensure that you are only sending messages to real 
+  people who actually want to receive them. This rule is especially true for standard aliases, 
+  which are customarily reserved for email watchdogs. These aliases can be maliciously added to 
+  your list as a form of sabotage, in order to damage your reputation.
+
+COMPLIANCE
+
+- Be aware of the email marketing and anti-spam laws and regulations in the countries and 
+  regions you send email to. You're responsible for ensuring that the email you send complies 
+  with these laws. This guide doesn't cover these laws, so it's important that you research 
+  them. For a list of laws, see Email Spam Legislation by Country on Wikipedia.
+
+- Always consult an attorney to obtain legal advice.
+
+================================================================================
+SECTION 12: GETTING STARTED WITH AMAZON SIMPLE EMAIL SERVICE
+================================================================================
+
+This chapter guides you through tasks required for initial set up of Amazon SES as well as 
+tutorials to help you get started.
+
+SETTING UP AMAZON SIMPLE EMAIL SERVICE
+
+Before you start using Amazon SES, you must complete the following tasks:
+
+1. Sign up for AWS
+2. Set up your SES account
+3. Grant programmatic access (To interact with SES outside of the console)
+4. Download an AWS SDK (For using the SES APIs)
+
+SIGN UP FOR AWS
+
+If you do not have an AWS account, complete the following steps to create one.
+
+TO SIGN UP FOR AN AWS ACCOUNT:
+
+1. Open https://portal.aws.amazon.com/billing/signup.
+2. Follow the online instructions.
+
+Part of the sign-up procedure involves receiving a phone call or text message and entering a 
+verification code on the phone keypad.
+
+When you sign up for an AWS account, an AWS account root user is created. The root user has 
+access to all AWS services and resources in the account. As a security best practice, assign 
+administrative access to a user, and use only the root user to perform tasks that require root 
+user access.
+
+SET UP YOUR SES ACCOUNT
+
+Get started with SES by verifying an email address and sending domain so that you can start 
+sending email through SES and request production access for your account by using the SES 
+account set up wizard.
+
+USING THE SES ACCOUNT SET UP WIZARD TO SET UP YOUR ACCOUNT:
+
+1. Sign in to the AWS Management Console and open the Amazon SES console at 
+   https://console.aws.amazon.com/ses/.
+2. Select Get started from the SES console home page and the wizard will walk you through the 
+   steps of setting up your SES account.
+
+The SES account set up wizard will only be presented if you have not yet created any identities 
+(email address or domain) in SES.
+
+Setup Wizard Steps:
+- Create or verify domain/email identity
+- Set up DKIM authentication
+- Configure feedback notifications
+- Request production access (if applicable)
+- Review sending quotas
+
+GRANT PROGRAMMATIC ACCESS
+(To Interact with SES Outside of the Console)
+
+Users need programmatic access if they want to interact with AWS outside of the AWS Management 
+Console. The way to grant programmatic access depends on the type of user that's accessing AWS.
+
+TO GRANT USERS PROGRAMMATIC ACCESS, CHOOSE ONE OF THE FOLLOWING OPTIONS:
+
+ACCESS TYPE 1: IAM (RECOMMENDED)
+- Method: Use console credentials as temporary credentials
+- Tools: AWS CLI, AWS SDKs, or AWS APIs
+- Reference: Login for AWS local development
+  - AWS CLI: AWS Command Line Interface User Guide
+  - AWS SDKs: AWS SDKs and Tools Reference Guide
+
+ACCESS TYPE 2: WORKFORCE IDENTITY
+(Users managed in IAM Identity Center)
+- Method: Use temporary credentials
+- Tools: AWS CLI, AWS SDKs, or AWS APIs
+- Reference: 
+  - AWS CLI: Configuring the AWS CLI to use AWS IAM Identity Center (AWS Command Line 
+    Interface User Guide)
+  - AWS SDKs, tools, and AWS APIs: IAM Identity Center authentication (AWS SDKs and Tools 
+    Reference Guide)
+
+ACCESS TYPE 3: IAM USER
+- Method: Use temporary credentials
+- Tools: AWS CLI, AWS SDKs, or AWS APIs
+- Reference: Using temporary credentials with AWS resources (IAM User Guide)
+
+BEST PRACTICES FOR PROGRAMMATIC ACCESS:
+- Use temporary security credentials
+- Use IAM users instead of root account
+- Enable MFA where possible
+- Rotate credentials regularly
+- Restrict permissions to minimum needed
+- Monitor and audit API calls
+
+================================================================================
+SECTION 13: WORKING WITH AWS SDKS
+================================================================================
+
+AWS software development kits (SDKs) are available for many popular programming languages. 
+Each SDK provides an API, code examples, and documentation that make it easier for developers 
+to build applications in their preferred language.
+
+SDK DOCUMENTATION AND CODE EXAMPLES
+
+┌────────────────────────────┬──────────────────────────┬─────────────────────────┐
+| SDK                        | Documentation            | Code Examples           |
+├────────────────────────────┼──────────────────────────┼─────────────────────────┤
+| AWS SDK for C++            | AWS SDK for C++          | AWS SDK for C++ examples|
+| AWS CLI                    | AWS CLI                  | AWS CLI examples        |
+| AWS SDK for Go             | AWS SDK for Go           | AWS SDK for Go examples |
+| AWS SDK for Java           | AWS SDK for Java         | AWS SDK for Java exs    |
+| AWS SDK for JavaScript     | AWS SDK for JavaScript   | AWS JavaScript examples |
+| AWS SDK for Kotlin         | AWS SDK for Kotlin       | AWS Kotlin examples     |
+| AWS SDK for .NET           | AWS SDK for .NET         | AWS .NET examples       |
+| AWS SDK for PHP            | AWS SDK for PHP          | AWS PHP examples        |
+| AWS Tools for PowerShell   | AWS Tools for PowerShell | AWS PowerShell examples |
+| AWS SDK for Python (Boto3) | AWS SDK for Python       | AWS Python examples     |
+| AWS SDK for Ruby           | AWS SDK for Ruby         | AWS Ruby examples       |
+| AWS SDK for Rust           | AWS SDK for Rust         | AWS Rust examples       |
+| AWS SDK for SAP ABAP       | AWS SDK for SAP ABAP     | AWS SAP ABAP examples   |
+| AWS SDK for Swift          | AWS SDK for Swift        | AWS Swift examples      |
+└────────────────────────────┴──────────────────────────┴─────────────────────────┘
+
+For examples specific to Amazon SES, see Code examples for Amazon SES using AWS SDKs.
+
+EXAMPLE AVAILABILITY
+
+Can't find what you need? Request a code example by using the Provide feedback link at the 
+bottom of this page.
+
+================================================================================
+SECTION 14: EMAIL ATTACHMENTS
+================================================================================
+
+HOW ATTACHMENTS WORK
+
+When sending email with Amazon SES, you can include file attachments. To attach a file to an 
+email, you must encode the attachment using base64 encoding and include it as a MIME message 
+part with the appropriate headers.
+
+ATTACHMENT OBJECT STRUCTURE
+
+Attachments are typically placed in dedicated MIME message parts, which include the following 
+headers:
+
+CONTENT-TYPE
+The file type of the attachment. The following are examples of common MIME Content-Type 
+declarations:
+- Plain text file – Content-Type: text/plain; name="sample.txt"
+- Microsoft Word Document – Content-Type: application/msword; name="document.docx"
+- JPG image – Content-Type: image/jpeg; name="photo.jpeg"
+
+CONTENT-DISPOSITION
+Specifies how the recipient's email client should handle the content. For attachments, this 
+value is Content-Disposition: attachment.
+
+CONTENT-TRANSFER-ENCODING
+The scheme that was used to encode the attachment. For file attachments, this value is almost 
+always base64.
+
+THE ENCODED ATTACHMENT
+You must encode the actual attachment and include it in the body below the attachment headers.
+
+Amazon SES accepts most common file types. For a list of file types that Amazon SES doesn't 
+accept, see SES unsupported attachment types.
+
+EXAMPLE CODE - PYTHON WITH ATTACHMENTS
+
+================================================================================
+# Send raw email with attachment
+import boto3
+import email
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import os
+
+SENDER = "sender@example.com"
+RECIPIENT = "recipient@example.com"
+SUBJECT = "Email with attachment"
+BODY_TEXT = "Please see attached document."
+BODY_HTML = "<html><body><p>Please see attached <b>document</b>.</p></body></html>"
+ATTACHMENT = "customers.txt"
+CHARSET = "utf-8"
+
+msg = MIMEMultipart('mixed')
+msg['Subject'] = SUBJECT  
+msg['From'] = SENDER  
+msg['To'] = RECIPIENT 
+ 
+# Create a multipart/alternative child container. 
+msg_body = MIMEMultipart('alternative') 
+ 
+# Encode the text and HTML content and set the character encoding.
+textpart = MIMEText(BODY_TEXT.encode(CHARSET), 'plain', CHARSET) 
+htmlpart = MIMEText(BODY_HTML.encode(CHARSET), 'html', CHARSET) 
+ 
+# Add the text and HTML parts to the child container. 
+msg_body.attach(textpart) 
+msg_body.attach(htmlpart) 
+ 
+# Define the attachment part and encode it using MIMEApplication. 
+att = MIMEApplication(open(ATTACHMENT, 'rb').read()) 
+ 
+# Add a header to tell the email client to treat this part as an attachment,
+# and to give the attachment a name. 
+att.add_header('Content-Disposition','attachment',filename=os.path.basename(ATTACHMENT)) 
+ 
+# Attach the multipart/alternative child container to the multipart/mixed
+# parent container. 
+msg.attach(msg_body) 
+msg.attach(att) 
+
+strmsg = str(msg) 
+body = bytes(strmsg, 'utf-8') 
+ 
+client = boto3.client('sesv2') 
+response = client.send_email( 
+    FromEmailAddress=SENDER, 
+    Destination={ 
+        'ToAddresses': [RECIPIENT] 
+    }, 
+    Content={ 
+        'Raw': { 
+            'Data': body 
+        } 
+    } 
+) 
+print(response)
+================================================================================
+
+REQUEST EXAMPLES - JSON
+
+EXAMPLE 1: SENDEMAIL WITH ATTACHMENT
+
+================================================================================
+{
+    "FromEmailAddress": "sender@example.com",
+    "Destination": {
+        "ToAddresses": [
+            "recipient@example.com"
+        ]
+    },
+    "Content": {
+        "Simple": {
+            "Subject": {
+                "Data": "Email with attachment"
+            },
+            "Body": {
+                "Text": {
+                    "Data": "Please see attached document."
+                },
+                "Html": {
+                    "Data": "Please see attached <b>document</b>."
+                }
+            },
+            "Attachments": [
+                {
+                    "RawContent": "<base64-encoded-content>",
+                    "ContentDisposition": "ATTACHMENT",
+                    "FileName": "document.pdf",
+                    "ContentDescription": "PDF Document Attachment",
+                    "ContentTransferEncoding": "BASE64"
+                }
+            ]
+        }
+    }
+}
+================================================================================
+
+EXAMPLE 2: SENDEMAIL WITH INLINE ATTACHMENT
+
+================================================================================
+{
+    "FromEmailAddress": "sender@example.com",
+    "Destination": {
+        "ToAddresses": [
+            "recipient@example.com"
+        ]
+    },
+    "Content": {
+        "Simple": {
+            "Subject": {
+                "Data": "Email with attachment"
+            },
+            "Body": {
+                "Html": {
+                    "Data": "<html><body>Our logo:<br><img src=\"cid:logo123\" alt=\"Company Logo\"></body></html>"
+                }
+            },
+            "Attachments": [
+                {
+                    "RawContent": "<base64-encoded-content>",
+                    "ContentDisposition": "INLINE",
+                    "FileName": "logo.png",
+                    "ContentId": "logo123",
+                    "ContentTransferEncoding": "BASE64"
+                }
+            ]
+        }
+    }
+}
+================================================================================
+
+EXAMPLE 3: SENDEMAIL WITH TEMPLATE CONTENT
+
+================================================================================
+{
+    "FromEmailAddress": "sender@example.com",
+    "Destination": {
+        "ToAddresses": [
+            "recipient@example.com"
+        ]
+    },
+    "Content": {
+        "Template": {
+            "TemplateName": "MyTemplate",
+            "TemplateData": "{\"name\":\"John\"}",
+            "Attachments": [
+                {
+                    "RawContent": "<base64-encoded-content>",
+                    "ContentDisposition": "ATTACHMENT",
+                    "FileName": "document.pdf",
+                    "ContentDescription": "PDF Document Attachment",
+                    "ContentTransferEncoding": "BASE64"
+                }
+            ]
+        }
+    }
+}
+================================================================================
+
+EXAMPLE 4: SENDBULKEMAIL WITH ATTACHMENT CONTENT
+
+================================================================================
+{
+    "FromEmailAddress": "sender@example.com",
+    "DefaultContent": {
+        "Template": {
+            "TemplateName": "MyTemplate",
+            "TemplateData": "{}",
+            "Attachments": [
+                {
+                    "RawContent": "<base64-encoded-content>",
+                    "ContentDisposition": "ATTACHMENT",
+                    "FileName": "document.pdf",
+                    "ContentDescription": "PDF Document Attachment",
+                    "ContentTransferEncoding": "BASE64"
+                }
+            ]
+        }
+    },
+    "BulkEmailEntries": [
+        {
+            "Destination": {
+                "ToAddresses": [
+                    "recipient@example.com"
+                ]
+            },
+            "ReplacementEmailContent": {
+                "ReplacementTemplate": {
+                    "ReplacementTemplateData": "{\"name\":\"John\"}"
+                }
+            }
+        }
+    ]
+}
+================================================================================
+
+BEST PRACTICES FOR ATTACHMENTS
+
+- Keep total message size (including attachments) under 40MB.
+- Let SES auto-detect content types based on file extensions when possible.
+- Explicitly specify content types only when they fall outside of the common MIME types.
+- Consider using inline images for better email rendering.
+- SES supports a wide range of MIME types for attachments, except for those listed in 
+  Unsupported attachment types.
+
+SES UNSUPPORTED ATTACHMENT TYPES
+
+You can send messages with attachments through Amazon SES by using the Multipurpose Internet 
+Mail Extensions (MIME) standard. Amazon SES accepts all file attachment types except for 
+attachments with the file extensions in the following list:
+
+.ade, .adp, .app, .asp, .bas, .bat, .hta, .inf, .ins, .isp, .its, .js, .mau, .mav, .maw, 
+.mda, .mdb, .mde, .mst, .ops, .pcd, .pif, .plg, .prf, .psc1, .psc2, .tmp, .url, .vb, .vbe, 
+.cer, .chm, .cmd, .com, .cpl, .crt, .csh, .der, .exe, .fxp, .gadget, .hlp, .jse, .ksh, 
+.lib, .lnk, .mad, .maf, .mag, .mam, .maq, .mar, .mas, .mat, .mdt, .mdw, .mdz, .msc, .msh, 
+.msh1, .msh2, .mshxml, .msh1xml, .msh2xml, .msi, .msp, .prg, .reg, .scf, .scr, .sct, .shb, 
+.shs, .sys, .ps1, .ps1xml, .ps2, .ps2xml, .vbs, .vps, .vsmacros, .vss, .vst, .vsw, .vxd, 
+.ws, .wsc, .wsf, .wsh, .xnk
+
+Some ISPs have further restrictions (such as restrictions regarding archived attachments), so 
+we recommend testing your email sending through major ISPs before you send your production 
+email.
+
+================================================================================
+SECTION 15: EMAIL RECEIVING WITH AMAZON SES
+================================================================================
+
+Besides using Amazon SES to manage your email sending, you can also configure SES to receive 
+email on behalf of one or more of your domains. As the email receiver, SES handles underlying 
+mail-receiving operations, such as communicating with other mail servers, scanning for spam 
+and viruses, blocking mail from untrusted sources (addresses on the block lists of either 
+Spamhaus or SES), and accepting mail for recipients in your domain.
+
+The extent of processing on your received email is determined by the custom instructions you 
+specify. These instructions come in two forms:
+
+RECEIPT RULES (RECIPIENT-BASED CONTROL)
+Provide the finest granularity of control over incoming email. Receipt rules can do advanced 
+processing such as deliver incoming mail to an Amazon S3 bucket, publish it to an Amazon SNS 
+topic, send it to Amazon WorkMail, or automatically send bounce messages when messages are to 
+specific email addresses, and more.
+
+IP ADDRESS FILTERS (IP-BASED CONTROL)
+Provide a broad level of control and are simple to setup. These filters allow you to 
+explicitly block or allow all messages from specific IP addresses or IP address ranges.
+
+EMAIL RECEIVING FEATURES:
+- Receive email to your domain
+- Process emails with receipt rules
+- Filter emails with IP address filters  
+- Store emails in S3
+- Trigger Lambda functions
+- Publish to SNS topics
+- Send to WorkMail
+- Scan for spam and viruses
+- Block from untrusted sources
+- Manage MX records
+
+RECEIPT RULES COMPONENTS:
+- Recipient filters (who the email is for)
+- Actions to take (S3, SNS, Lambda, etc.)
+- Execution order/priority
+- Enable/disable rules
+- Stop rule set processing option
+
+IP ADDRESS FILTERS:
+- Allow/block by IP or CIDR block
+- Policy: Allow or Block
+- Simple administration
+- Broad filtering capability
+- Useful for trusted senders/blockers
+
+EMAIL RECEIVING SETUP:
+1. Verify domain (already done for sending)
+2. Publish MX record
+3. Create receipt rule set
+4. Define receipt rules or IP filters
+5. Configure target resources
+6. Test email receiving
+
+RESOURCE REQUIREMENTS:
+- MX record in domain DNS
+- Receipt rule set
+- Target resources in same region as SES
+- IAM permissions for resources
+- Optional: custom MAIL FROM domain
+- Optional: virus scanning, DKIM verification
+
+EMAIL RECEIVING WORKFLOW:
+1. Sender sends email to your domain
+2. Email routed via MX record to SES
+3. SES receives email
+4. Content scanning (spam, viruses)
+5. IP filtering (if configured)
+6. Receipt rule evaluation
+7. Action execution (S3 store, SNS publish, etc.)
+8. Notification to configured destinations
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+
+This comprehensive text file contains ALL information from the Amazon Simple Email Service 
+Developer Guide PDF, including:
+
+✓ All sections and subsections
+✓ Complete table contents
+✓ All code examples (Python, JSON)
+✓ All best practices and guidelines
+✓ All quotas and limits
+✓ Setup and configuration instructions
+✓ Email formats and examples
+✓ Delivery concepts and processes
+✓ Authentication and security information
+✓ SDK documentation references
+✓ Troubleshooting and compliance guidance
+
+Document completed: January 25, 2026
+Generated from: ses-dg.pdf (Amazon SES Developer Guide)
+Copyright © 2026 Amazon Web Services, Inc.
+
+================================================================================

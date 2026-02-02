@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Sidebar, { MobileHeader } from '@/components/Sidebar';
 import { AuthProvider } from '@/context/AuthContext';
 import { ToastProvider } from '@/components/Toast';
+import ChatBot from '@/components/ChatBot';
 
 export default function DashboardLayout({
   children,
@@ -26,6 +27,9 @@ export default function DashboardLayout({
           <main className="flex-1 overflow-auto bg-gray-50">
             <div className="p-4 sm:p-6">{children}</div>
           </main>
+
+          {/* AI Chatbot */}
+          <ChatBot />
         </div>
       </ToastProvider>
     </AuthProvider>

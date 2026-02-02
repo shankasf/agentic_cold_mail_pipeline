@@ -64,7 +64,7 @@ export async function batchCreateEmails(
           pipelineType: email.pipelineType || 'AGENTIC',
           templateId: email.templateId,
           fromName: email.fromName || 'CallSphere',
-          fromEmail: email.fromEmail || 'sagar@callsphere.tech',
+          fromEmail: email.fromEmail || 'greetings@callsphere.tech',
         })),
         skipDuplicates: true,
       });

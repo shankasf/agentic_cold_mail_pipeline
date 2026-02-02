@@ -57,7 +57,7 @@ export default function LoginPage() {
     <LoginForm
       onSubmit={handleLogin}
       error={error}
-      emailPlaceholder="sagar@callsphere.tech"
+      emailPlaceholder="greetings@callsphere.tech"
     />
   );
 }
